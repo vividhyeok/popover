@@ -62,7 +62,6 @@ export function PopoverApp() {
   const [translating, setTranslating] = useState(false);
   const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
-  const activeRowRef = useRef<HTMLButtonElement>(null);
   const wordInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const currentTimeRef = useRef(0);
 
@@ -157,7 +156,6 @@ export function PopoverApp() {
     });
     setRevealed(false);
     window.requestAnimationFrame(() => {
-      activeRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       if (mode === "dictation") wordInputRefs.current.find(Boolean)?.focus({ preventScroll: true });
     });
   }, [activeIndex, mode, song?.id, updateSong]);
@@ -190,6 +188,12 @@ export function PopoverApp() {
     },
     [seekTo, song],
   );
+
+  const advanceToNextStudyLine = useCallback(() => {
+    if (!song) return;
+    const nextIndex = song.lyrics.findIndex((line, index) => index > activeIndex && !isSectionLine(line.english));
+    if (nextIndex >= 0) seekLine(nextIndex);
+  }, [activeIndex, seekLine, song]);
 
   const togglePlayback = useCallback(() => {
     if (!song) return;
@@ -306,11 +310,7 @@ export function PopoverApp() {
     if (!correct) return;
     const nextWordIndex = activeWords.findIndex((_, index) => index > wordIndex && nextResults[index] !== "correct");
     if (nextWordIndex >= 0) window.requestAnimationFrame(() => wordInputRefs.current[nextWordIndex]?.focus({ preventScroll: true }));
-    if (completed) showToast("모든 어절을 맞혔어요.", "success");
-    if (completed && app.settings.autoAdvance && activeIndex < song.lyrics.length - 1) {
-      const nextStudyLine = song.lyrics.findIndex((line, index) => index > activeIndex && !isSectionLine(line.english));
-      if (nextStudyLine >= 0) window.setTimeout(() => seekLine(nextStudyLine), 700);
-    }
+    if (completed) showToast("문장 완료 · Enter를 눌러 다음 문장으로 이동하세요.", "success");
   };
 
   const removeSong = (id: string) => {
@@ -423,6 +423,7 @@ export function PopoverApp() {
   const completedCount = song
     ? song.lyrics.filter((line) => !isSectionLine(line.english) && song.progress.lineProgress[line.id]?.completed).length
     : 0;
+  const activeWordsCompleted = activeWords.length > 0 && activeWords.every((_, index) => activeProgress.wordResults?.[index] === "correct");
 
   if (!hydrated) return <div className="app-loading">Popover를 준비하고 있습니다…</div>;
 
@@ -508,7 +509,7 @@ export function PopoverApp() {
 
                 {mode === "dictation" && activeLine ? (
                   activeLineIsSection ? (
-                    <div className="section-line-skip"><span>이 줄은 곡의 구간 표시라 받아쓰기에서 제외됩니다.</span><button onClick={() => seekLine(activeIndex + 1)}>다음 문장 <ChevronRight size={14} /></button></div>
+                    <div className="section-line-skip"><span>이 줄은 곡의 구간 표시라 받아쓰기에서 제외됩니다.</span><button onClick={advanceToNextStudyLine}>다음 문장 <ChevronRight size={14} /></button></div>
                   ) : (
                     <div className="word-practice">
                       <div className="word-practice-head">
@@ -533,7 +534,10 @@ export function PopoverApp() {
                                   onChange={(event) => setWordDraft(wordIndex, event.target.value)}
                                   onKeyDown={(event) => {
                                     if (event.nativeEvent.isComposing) return;
-                                    if (event.code === "Space") {
+                                    if (event.key === "Enter" && activeWordsCompleted) {
+                                      event.preventDefault();
+                                      advanceToNextStudyLine();
+                                    } else if (event.code === "Space") {
                                       event.preventDefault();
                                       checkWord(wordIndex, event.currentTarget.value);
                                     } else if (event.key === "Enter") {
@@ -547,7 +551,7 @@ export function PopoverApp() {
                           );
                         })}
                       </div>
-                      <div className="word-practice-foot"><span><kbd>Space</kbd> 또는 <kbd>Enter</kbd>로 확인 · 정답이면 다음 어절</span><span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span></div>
+                      <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}><span>{activeWordsCompleted ? <><kbd>Enter</kbd> 문장 확정 후 다음 문장</> : <><kbd>Space</kbd> 또는 <kbd>Enter</kbd>로 어절 확인</>}</span><span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span></div>
                     </div>
                   )
                 ) : null}
@@ -609,7 +613,7 @@ export function PopoverApp() {
               const progress = song.progress.lineProgress[line.id];
               const isActive = index === activeIndex;
               return (
-                <button ref={isActive ? activeRowRef : undefined} className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => seekLine(index)}>
+                <button className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => seekLine(index)}>
                   <span className="line-index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="line-body">
                     {mode === "listen" ? <span className="line-english">{line.english}</span> : null}
@@ -873,7 +877,7 @@ function SettingsDialog({ app, onChange, onClose }: { app: PersistedState; onCha
   const updateSettings = (partial: Partial<PersistedState["settings"]>) => onChange({ ...app, settings: { ...app.settings, ...partial } });
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-      <div className="dialog-card settings-dialog" role="dialog" aria-modal="true"><div className="dialog-header"><div><p className="eyebrow">PREFERENCES</p><h2>학습 설정</h2></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div><div className="settings-body"><label className="setting-row"><span><b>보관함 저장 한도</b><small>Local Storage를 안정적으로 쓰기 위해 3~12곡을 권장합니다.</small></span><select value={app.settings.maxSongs} onChange={(event) => updateSettings({ maxSongs: Number(event.target.value) })}>{[3, 5, 8, 10, 12].map((value) => <option key={value} value={value}>{value}곡</option>)}</select></label>{app.songs.length > app.settings.maxSongs ? <div className="settings-warning"><AlertCircle size={15} /> 현재 곡 수가 한도보다 많습니다. 삭제 전까지 새 곡을 추가할 수 없습니다.</div> : null}<label className="setting-row toggle-setting"><span><b>모든 어절 정답 후 다음 문장 이동</b><small>받아쓰기의 각 어절을 전부 맞히면 구간 표시를 건너뛰고 다음 학습 문장으로 이동합니다.</small></span><input type="checkbox" checked={app.settings.autoAdvance} onChange={(event) => updateSettings({ autoAdvance: event.target.checked })} /></label><div className="storage-note"><Library size={18} /><div><b>{app.songs.length}곡 저장 중</b><p>영상과 음원은 YouTube iframe에서 재생되며 브라우저에는 저장되지 않습니다.</p></div></div></div><div className="dialog-footer"><p>.env.local의 키 값은 브라우저로 노출되지 않습니다.</p><button className="primary-button" onClick={onClose}>완료</button></div></div>
+      <div className="dialog-card settings-dialog" role="dialog" aria-modal="true"><div className="dialog-header"><div><p className="eyebrow">PREFERENCES</p><h2>학습 설정</h2></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div><div className="settings-body"><label className="setting-row"><span><b>보관함 저장 한도</b><small>Local Storage를 안정적으로 쓰기 위해 3~12곡을 권장합니다.</small></span><select value={app.settings.maxSongs} onChange={(event) => updateSettings({ maxSongs: Number(event.target.value) })}>{[3, 5, 8, 10, 12].map((value) => <option key={value} value={value}>{value}곡</option>)}</select></label>{app.songs.length > app.settings.maxSongs ? <div className="settings-warning"><AlertCircle size={15} /> 현재 곡 수가 한도보다 많습니다. 삭제 전까지 새 곡을 추가할 수 없습니다.</div> : null}<div className="storage-note"><Library size={18} /><div><b>{app.songs.length}곡 저장 중</b><p>영상과 음원은 YouTube iframe에서 재생되며 브라우저에는 저장되지 않습니다.</p></div></div></div><div className="dialog-footer"><p>.env.local의 키 값은 브라우저로 노출되지 않습니다.</p><button className="primary-button" onClick={onClose}>완료</button></div></div>
     </div>
   );
 }
