@@ -226,19 +226,24 @@ export function PopoverApp() {
     if (playerReady) playerRef.current?.setRate(playbackRate);
   }, [playbackRate, playerReady, song?.id]);
 
-  const setOffset = (offset: number) => {
-    if (!song) return;
-    updateSong(song.id, (value) => ({ ...value, syncOffsetMs: Math.max(-120000, Math.min(120000, offset)) }));
-  };
-
   const alignFirstLyricToCurrentTime = () => {
     if (!song?.lyrics[0]) return;
     const exactPlayerTime = song.videoId && playerReady
       ? (playerRef.current?.getCurrentTime() ?? currentTimeRef.current)
       : currentTimeRef.current;
-    const nextOffsetMs = Math.round((song.lyrics[0].start - exactPlayerTime) * 1000);
-    setOffset(nextOffsetMs);
-    showToast(`첫 가사가 영상 ${formatTime(exactPlayerTime)}부터 시작하도록 맞췄습니다.`, "success");
+    const shiftSeconds = exactPlayerTime - song.lyrics[0].start;
+    const roundTime = (seconds: number) => Math.round(seconds * 1000) / 1000;
+    updateSong(song.id, (value) => ({
+      ...value,
+      syncOffsetMs: 0,
+      lyrics: value.lyrics.map((line) => ({
+        ...line,
+        start: roundTime(line.start + shiftSeconds),
+        end: roundTime(line.end + shiftSeconds),
+      })),
+    }));
+    const shiftLabel = `${shiftSeconds >= 0 ? "+" : ""}${shiftSeconds.toFixed(1)}초`;
+    showToast(`첫 가사를 ${formatTime(exactPlayerTime)}로 지정하고 모든 가사를 ${shiftLabel} 이동했습니다.`, "success");
   };
 
   const offsetSeconds = (song?.syncOffsetMs ?? 0) / 1000;
