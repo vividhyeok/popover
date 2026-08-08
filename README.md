@@ -22,7 +22,7 @@ Popover는 `yt-dlp`를 사용하지 않습니다. YouTube IFrame Player API의 �
 - `setPlaybackRate()`로 0.75×~1.5× 속도 조정
 - 기본 iframe 컨트롤로 음량, 자막, 전체 화면 제어
 
-URL/영상 ID 등록은 별도 Google API 키가 필요하지 않습니다. 앱 내부 YouTube 검색까지 사용하려면 선택적으로 `YOUTUBE_API_KEY`를 설정합니다. 키가 없을 때는 YouTube에서 영상을 찾은 뒤 URL을 붙여 넣으면 됩니다.
+URL/영상 ID 등록은 별도 Google API 키가 필요하지 않습니다. 키가 없을 때는 등록 화면의 `YouTube에서 검색` 버튼으로 공식 검색 페이지를 연 뒤, 원하는 영상 URL을 복사해 Popover에 붙여 넣으면 됩니다. 앱 내부에서 검색 결과 목록을 바로 받는 보조 기능만 선택적으로 `YOUTUBE_API_KEY`를 사용합니다.
 
 MV·라이브·가사 영상은 음원 버전과 인트로 길이가 다를 수 있습니다. 이때 다음 두 단계로 싱크를 맞춥니다.
 
