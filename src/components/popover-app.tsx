@@ -292,7 +292,7 @@ export function PopoverApp() {
             const wordDrafts = [...(before.wordDrafts ?? [])];
             const wordResults = [...(before.wordResults ?? [])];
             wordDrafts[wordIndex] = draft;
-            wordResults[wordIndex] = null;
+            wordResults[wordIndex] = revealed ? "wrong" : null;
             return { ...before, wordDrafts, wordResults };
           })(),
         },
@@ -304,7 +304,7 @@ export function PopoverApp() {
     if (!song || !activeLine) return;
     const draft = currentDraft?.trim() ?? activeProgress.wordDrafts?.[wordIndex]?.trim() ?? "";
     if (!draft) return;
-    const correct = normalizeWordAnswer(draft) === normalizeWordAnswer(activeWords[wordIndex] ?? "");
+    const correct = !revealed && normalizeWordAnswer(draft) === normalizeWordAnswer(activeWords[wordIndex] ?? "");
     const nextResults = [...(activeProgress.wordResults ?? [])];
     nextResults[wordIndex] = correct ? "correct" : "wrong";
     const correctCount = activeWords.filter((_, index) => nextResults[index] === "correct").length;
@@ -332,7 +332,44 @@ export function PopoverApp() {
     if (!correct) return;
     const nextWordIndex = activeWords.findIndex((_, index) => index > wordIndex && nextResults[index] !== "correct");
     if (nextWordIndex >= 0) window.requestAnimationFrame(() => wordInputRefs.current[nextWordIndex]?.focus({ preventScroll: true }));
-    if (completed) showToast("문장 완료 · Enter를 눌러 다음 문장으로 이동하세요.", "success");
+    if (completed) showToast("문장 완료 · 위·아래 버튼이나 오른쪽 목록으로 이동하세요.", "success");
+  };
+
+  const toggleAnswerReveal = () => {
+    if (!song || !activeLine) return;
+    if (revealed) {
+      setRevealed(false);
+      return;
+    }
+    updateSong(song.id, (value) => {
+      const before = value.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS;
+      const wordDrafts = before.wordDrafts ?? [];
+      const wordResults = activeWords.map((word, index) => {
+        if (before.wordResults?.[index] === "correct") return "correct" as const;
+        const draft = wordDrafts[index]?.trim() ?? "";
+        return draft && normalizeWordAnswer(draft) === normalizeWordAnswer(word) ? "correct" as const : "wrong" as const;
+      });
+      const correctCount = wordResults.filter((result) => result === "correct").length;
+      const score = activeWords.length ? Math.round((correctCount / activeWords.length) * 100) : 0;
+      const completed = activeWords.length > 0 && correctCount === activeWords.length;
+      return {
+        ...value,
+        progress: {
+          ...value.progress,
+          lineProgress: {
+            ...value.progress.lineProgress,
+            [activeLine.id]: {
+              ...before,
+              wordResults,
+              attempts: before.attempts + 1,
+              bestScore: Math.max(before.bestScore, score),
+              completed: before.completed || completed,
+            },
+          },
+        },
+      };
+    });
+    setRevealed(true);
   };
 
   const removeSong = (id: string) => {
@@ -536,7 +573,7 @@ export function PopoverApp() {
                     <div className="word-practice">
                       <div className="word-practice-head">
                         <div><b>어절별 받아쓰기</b><span>{activeProgress.wordResults?.filter((result) => result === "correct").length ?? 0} / {activeWords.length} 정답</span></div>
-                        <button className="reveal-answer-button" onClick={() => setRevealed((value) => !value)}>{revealed ? <EyeOff size={14} /> : <Eye size={14} />}{revealed ? "정답 닫기" : "정답 보기"}</button>
+                        <button className="reveal-answer-button" onClick={toggleAnswerReveal}>{revealed ? <EyeOff size={14} /> : <Eye size={14} />}{revealed ? "정답 닫기" : "정답 보기"}</button>
                       </div>
                       <div className="word-flow" aria-label="문장 어절별 입력">
                         {activeWords.map((word, wordIndex) => {
