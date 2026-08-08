@@ -39,6 +39,7 @@ type Toast = { message: string; tone?: "normal" | "error" | "success" };
 type TranslationProgress = { completed: number; total: number; error?: string };
 type GenieResult = { id: string; title: string; artist: string };
 type YouTubeResult = { videoId: string; title: string; artist: string; thumbnail: string };
+type ImportedTranslation = { korean: string; note?: string };
 
 const EMPTY_PROGRESS = { draft: "", attempts: 0, bestScore: 0, completed: false };
 
@@ -56,6 +57,7 @@ export function PopoverApp() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [translationImportOpen, setTranslationImportOpen] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
@@ -514,7 +516,7 @@ export function PopoverApp() {
           <div className="lyrics-toolbar">
             <div><p className="eyebrow">LYRIC TRACKER</p><h2>문장 트래킹</h2></div>
             <div className="toolbar-actions">
-              <button className="translate-button" disabled={!song || translating} onClick={() => song && void translateSong(song)}>{translating ? <Loader2 className="spin" size={15} /> : <Languages size={15} />} {translating && translationProgress ? `${translationProgress.completed}/${translationProgress.total} 번역 중` : song?.lyrics.some((line) => !line.korean) && song?.lyrics.some((line) => line.korean) ? "번역 이어하기" : "전체 번역"}</button>
+              <button className="translate-button" disabled={!song} onClick={() => setTranslationImportOpen(true)}><Sparkles size={15} /> AI 번역 가져오기</button>
               <div className="mode-switch"><button className={mode === "listen" ? "active" : ""} onClick={() => setMode("listen")}>듣기</button><button className={mode === "dictation" ? "active" : ""} onClick={() => setMode("dictation")}>받아쓰기</button></div>
             </div>
           </div>
@@ -554,8 +556,142 @@ export function PopoverApp() {
 
       {addOpen ? <AddSongDialog onClose={() => setAddOpen(false)} onAdd={addSong} songCount={app.songs.length} maxSongs={app.settings.maxSongs} onManage={() => { setAddOpen(false); setSettingsOpen(true); }} /> : null}
       {settingsOpen ? <SettingsDialog app={app} onChange={setApp} onClose={() => setSettingsOpen(false)} /> : null}
+      {translationImportOpen && song ? <TranslationImportDialog song={song} onClose={() => setTranslationImportOpen(false)} onApply={(translated) => { updateSong(song.id, (value) => ({ ...value, lyrics: value.lyrics.map((line, index) => ({ ...line, korean: translated[index].korean, note: translated[index].note })) })); setTranslationImportOpen(false); showToast(`${translated.length}개 문장의 번역과 NOTE를 적용했습니다.`, "success"); }} /> : null}
       {toast ? <div className={`toast ${toast.tone ?? "normal"}`}>{toast.tone === "error" ? <AlertCircle size={17} /> : toast.tone === "success" ? <CircleCheck size={17} /> : null}{toast.message}</div> : null}
     </main>
+  );
+}
+
+function buildTranslationPrompt(song: Song) {
+  return `You are creating a high-quality Korean study translation for an English pop song.
+
+SONG
+Title: ${song.title}
+Artist: ${song.artist}
+Line count: ${song.lyrics.length}
+
+TRANSLATION CONTRACT
+1. Read the entire song before translating. Keep the speaker, addressee, narrative, emotion, recurring imagery, pronouns, and terminology coherent across all lines.
+2. Preserve an exact 1:1 mapping: one JSON line object for every numbered English line. Never merge, split, omit, add, or reorder lines.
+3. Translate identical repeated English lines identically. Keep near-repeated hooks and motifs terminologically consistent unless the meaning genuinely changes.
+4. Write direct, intuitive Korean that a learner can map back to the English. Use context for accuracy, but do not create a poetic rewrite or add meaning absent from the original.
+5. Preserve the intent and register of slang, contractions, profanity, dialect, deliberate nonstandard grammar, spelling, and wordplay. Do not silently correct the English.
+6. Use note only when slang, an idiom, deliberate grammar, wordplay, or a cultural reference materially helps English study. The note must be one short Korean sentence. Otherwise use null.
+7. Copy each supplied English line into the english field verbatim so the importing app can verify alignment.
+8. Return only one valid JSON object. Do not use Markdown, code fences, introductions, or explanations outside JSON.
+
+REQUIRED JSON SHAPE
+{
+  "version": 1,
+  "song": { "title": ${JSON.stringify(song.title)}, "artist": ${JSON.stringify(song.artist)} },
+  "mood": "곡 전체 분위기를 나타내는 짧은 한국어 구절",
+  "lines": [
+    { "index": 1, "english": "exact original line", "korean": "학습용 한국어 번역", "note": null }
+  ]
+}
+
+The lines array must contain exactly ${song.lyrics.length} objects with consecutive indexes 1 through ${song.lyrics.length}.
+
+LYRICS
+${song.lyrics.map((line, index) => `${index + 1}. ${line.english}`).join("\n")}`;
+}
+
+function parseImportedTranslation(raw: string, song: Song): ImportedTranslation[] {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("JSON 객체를 찾지 못했습니다. 모델의 전체 JSON 응답을 붙여 넣어주세요.");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    throw new Error("JSON 문법을 읽을 수 없습니다. 응답이 중간에 잘리지 않았는지 확인해주세요.");
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("올바른 JSON 객체가 아닙니다.");
+
+  const object = parsed as {
+    lines?: unknown[];
+    translations?: unknown[];
+    studyNotes?: unknown[];
+  };
+  const source = Array.isArray(object.lines) ? object.lines : object.translations;
+  if (!Array.isArray(source)) throw new Error("JSON에 lines 배열이 없습니다.");
+  if (source.length !== song.lyrics.length) {
+    throw new Error(`문장 수가 맞지 않습니다. 현재 곡 ${song.lyrics.length}줄, JSON ${source.length}줄입니다.`);
+  }
+
+  const byIndex = new Map<number, ImportedTranslation>();
+  source.forEach((entry, position) => {
+    if (typeof entry === "string") {
+      const note = object.studyNotes?.[position];
+      byIndex.set(position, { korean: entry.trim(), note: typeof note === "string" && note.trim() ? note.trim() : undefined });
+      return;
+    }
+    if (!entry || typeof entry !== "object") throw new Error(`${position + 1}번 번역 항목이 객체가 아닙니다.`);
+    const item = entry as { index?: unknown; english?: unknown; korean?: unknown; translation?: unknown; note?: unknown; studyNote?: unknown };
+    const index = Number(item.index ?? position + 1) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= song.lyrics.length || byIndex.has(index)) {
+      throw new Error(`${position + 1}번째 항목의 index가 잘못됐거나 중복됐습니다.`);
+    }
+    if (typeof item.english === "string") {
+      const expected = song.lyrics[index].english.replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
+      const received = item.english.replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
+      if (expected !== received) throw new Error(`${index + 1}번 영어 원문이 현재 곡과 다릅니다.`);
+    }
+    const korean = typeof item.korean === "string" ? item.korean : item.translation;
+    if (typeof korean !== "string" || !korean.trim()) throw new Error(`${index + 1}번 한국어 번역이 비어 있습니다.`);
+    const rawNote = item.note ?? item.studyNote;
+    byIndex.set(index, { korean: korean.trim(), note: typeof rawNote === "string" && rawNote.trim() ? rawNote.trim() : undefined });
+  });
+
+  const canonical = new Map<string, ImportedTranslation>();
+  return song.lyrics.map((line, index) => {
+    const imported = byIndex.get(index);
+    if (!imported) throw new Error(`${index + 1}번 번역을 찾지 못했습니다.`);
+    const key = line.english.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
+    const repeated = canonical.get(key);
+    if (repeated) return repeated;
+    canonical.set(key, imported);
+    return imported;
+  });
+}
+
+function TranslationImportDialog({ song, onClose, onApply }: { song: Song; onClose: () => void; onApply: (translated: ImportedTranslation[]) => void }) {
+  const prompt = useMemo(() => buildTranslationPrompt(song), [song]);
+  const [result, setResult] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("클립보드에 복사하지 못했습니다. 프롬프트 영역에서 Ctrl+A, Ctrl+C를 사용해주세요.");
+    }
+  };
+
+  const apply = () => {
+    setError("");
+    try {
+      onApply(parseImportedTranslation(result, song));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "번역 JSON을 적용하지 못했습니다.");
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <div className="dialog-card translation-import-dialog" role="dialog" aria-modal="true" aria-label="AI 번역 가져오기">
+        <div className="dialog-header"><div><p className="eyebrow">MODEL-INDEPENDENT TRANSLATION</p><h2>AI 번역 가져오기</h2><p>Claude, GPT 등 원하는 모델에서 전체 곡을 충분히 검토한 결과를 가져옵니다.</p></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div>
+        <div className="translation-import-body">
+          <section className="translation-step"><div className="translation-step-head"><span>1</span><div><h3>전체 가사 프롬프트 복사</h3><p>번역 원칙과 정확한 JSON 형식이 포함되어 있습니다.</p></div><button className="copy-prompt-button" onClick={copyPrompt}>{copied ? <Check size={15} /> : <Sparkles size={15} />}{copied ? "복사됨" : "프롬프트 복사"}</button></div><textarea className="prompt-preview" readOnly value={prompt} /><div className="prompt-meta">{song.lyrics.length}개 문장 · {prompt.length.toLocaleString()}자 · 선택한 AI 서비스로 가사 원문이 전송됩니다.</div></section>
+          <section className="translation-step"><div className="translation-step-head"><span>2</span><div><h3>모델의 JSON 결과 붙여넣기</h3><p>코드 블록이 포함되어 있어도 JSON 부분을 자동으로 찾습니다.</p></div></div><textarea className="translation-json-input" value={result} onChange={(event) => { setResult(event.target.value); setError(""); }} placeholder={'{\n  "version": 1,\n  "lines": [\n    { "index": 1, "english": "...", "korean": "...", "note": null }\n  ]\n}'} />{error ? <div className="import-error"><AlertCircle size={15} /> {error}</div> : <div className="import-checks"><Check size={14} /> 적용 전에 문장 수·순서·영어 원문·반복 문장을 자동 검증합니다.</div>}</section>
+        </div>
+        <div className="dialog-footer"><p>검증을 통과한 번역과 NOTE는 현재 곡에 즉시 저장됩니다.</p><div><button className="cancel-button" onClick={onClose}>취소</button><button className="primary-button" onClick={apply} disabled={!result.trim()}><Check size={16} /> 검증 후 적용</button></div></div>
+      </div>
+    </div>
   );
 }
 
@@ -576,7 +712,7 @@ function AddSongDialog({ onClose, onAdd, songCount, maxSongs, onManage }: {
   const [genieResults, setGenieResults] = useState<GenieResult[]>([]);
   const [genieId, setGenieId] = useState("");
   const [lrc, setLrc] = useState("");
-  const [translateAfter, setTranslateAfter] = useState(true);
+  const [translateAfter, setTranslateAfter] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const full = songCount >= maxSongs;
@@ -653,7 +789,7 @@ function AddSongDialog({ onClose, onAdd, songCount, maxSongs, onManage }: {
         <div className="add-grid">
           <section className="form-section"><div className="section-number">1</div><div className="section-content"><h3>YouTube 영상 연결</h3><p>URL 또는 11자리 영상 ID는 API 키 없이 바로 사용할 수 있습니다.</p><div className="inline-form"><div className="field with-icon"><Link2 size={15} /><input value={videoInput} onChange={(event) => setVideoInput(event.target.value)} placeholder="YouTube에서 복사한 URL 또는 영상 ID" /></div><button onClick={resolveVideo} disabled={busy === "video"}>{busy === "video" ? <Loader2 className="spin" size={16} /> : "확인"}</button></div><div className="or-divider"><span>영상을 아직 찾지 않았다면</span></div><div className="inline-form youtube-search-form"><div className="field with-icon"><Search size={15} /><input value={videoQuery} onChange={(event) => setVideoQuery(event.target.value)} placeholder="아티스트와 곡명" /></div><a className="external-search" href={videoQuery.trim() ? `https://www.youtube.com/results?search_query=${encodeURIComponent(videoQuery.trim())}` : "https://www.youtube.com"} target="_blank" rel="noreferrer"><ExternalLink size={14} /> YouTube에서 검색</a><button className="secondary" onClick={searchVideo} disabled={busy === "youtube"} title="YOUTUBE_API_KEY가 있을 때만 사용 가능">{busy === "youtube" ? <Loader2 className="spin" size={16} /> : "앱 안 검색"}</button></div><p className="search-help">검색 결과에서 영상을 연 뒤 주소를 복사해 위 URL 칸에 붙여 넣으세요. 앱 안 검색만 선택적 API 키가 필요합니다.</p>{videoResults.length ? <div className="search-results">{videoResults.map((result) => <button key={result.videoId} onClick={() => selectVideo(result)}><span className="result-thumb" style={{ backgroundImage: `url(${result.thumbnail})` }} /><span><b>{result.title}</b><small>{result.artist}</small></span></button>)}</div> : null}{video ? <div className="selected-source"><span className="result-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }} /><div><span>연결된 영상</span><b>{video.title}</b><small>{video.artist}</small></div><Check size={18} /></div> : null}</div></section>
           <section className="form-section"><div className="section-number">2</div><div className="section-content"><h3>동기화 가사</h3><p>Genie에서 찾거나 LRC를 직접 붙여 넣으세요.</p><div className="inline-form"><div className="field with-icon"><Search size={15} /><input value={genieQuery} onChange={(event) => setGenieQuery(event.target.value)} placeholder="Genie 곡 검색" /></div><button className="secondary" onClick={searchGenie} disabled={busy === "genie"}>{busy === "genie" ? <Loader2 className="spin" size={16} /> : "찾기"}</button></div>{genieResults.length ? <div className="search-results genie-results">{genieResults.map((result) => <button key={result.id} onClick={() => fetchGenieLyrics(result)}><span className="result-music"><Languages size={16} /></span><span><b>{result.title}</b><small>{result.artist}</small></span><em>{busy === `genie-${result.id}` ? "불러오는 중" : "가사 사용"}</em></button>)}</div> : null}<textarea className="lrc-input" value={lrc} onChange={(event) => setLrc(event.target.value)} placeholder={'[00:12.40] First line of the song\n[00:16.10] Second line of the song\n\n타임스탬프가 없으면 곡 길이에 맞춰 임시 배분됩니다.'} /><div className="line-count"><Clock3 size={14} /> {parseLrc(lrc).length}개 문장 감지 {genieId ? <span>· Genie #{genieId}</span> : null}</div></div></section>
-          <section className="form-section"><div className="section-number">3</div><div className="section-content meta-fields"><h3>곡 정보 및 번역</h3><div className="two-fields"><label>곡명<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Song title" /></label><label>아티스트<input value={artist} onChange={(event) => setArtist(event.target.value)} placeholder="Artist" /></label></div><label className="check-row"><input type="checkbox" checked={translateAfter} onChange={(event) => setTranslateAfter(event.target.checked)} /><span><b>등록 후 DeepSeek로 전체 맥락 번역</b><small>영어 원문 아래에 자연스러운 한국어 번역을 붙입니다.</small></span></label></div></section>
+          <section className="form-section"><div className="section-number">3</div><div className="section-content meta-fields"><h3>곡 정보 및 번역</h3><div className="two-fields"><label>곡명<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Song title" /></label><label>아티스트<input value={artist} onChange={(event) => setArtist(event.target.value)} placeholder="Artist" /></label></div><label className="check-row"><input type="checkbox" checked={translateAfter} onChange={(event) => setTranslateAfter(event.target.checked)} /><span><b>등록 후 DeepSeek 자동 초안 만들기</b><small>기본값은 꺼짐입니다. 고품질 번역은 등록 후 ‘AI 번역 가져오기’를 사용하세요.</small></span></label></div></section>
         </div>
         {error ? <div className="form-error"><AlertCircle size={16} /> {error}</div> : null}
         <div className="dialog-footer"><p>가사와 학습 기록만 Local Storage에 저장됩니다.</p><div><button className="cancel-button" onClick={onClose}>취소</button><button className="primary-button" onClick={submit} disabled={full || !video || !lrc.trim()}><Plus size={16} /> 학습 곡 등록</button></div></div>
