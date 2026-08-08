@@ -40,6 +40,7 @@ export type YouTubePlayerHandle = {
   toggle: () => void;
   seekTo: (seconds: number) => void;
   setRate: (rate: number) => void;
+  getCurrentTime: () => number;
   getDuration: () => number;
 };
 
@@ -103,6 +104,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(function You
     },
     seekTo: (seconds) => playerRef.current?.seekTo(Math.max(0, seconds), true),
     setRate: (rate) => playerRef.current?.setPlaybackRate(rate),
+    getCurrentTime: () => playerRef.current?.getCurrentTime() ?? 0,
     getDuration: () => playerRef.current?.getDuration() ?? 0,
   }));
 
