@@ -588,8 +588,9 @@ export function PopoverApp() {
                                   aria-label={`${wordIndex + 1}번째 어절`}
                                   autoComplete="off"
                                   spellCheck={false}
-                                  value={activeProgress.wordDrafts?.[wordIndex] ?? ""}
+                                  value={revealed && result === "wrong" ? word : (activeProgress.wordDrafts?.[wordIndex] ?? "")}
                                   placeholder="…"
+                                  readOnly={revealed}
                                   onChange={(event) => setWordDraft(wordIndex, event.target.value)}
                                   onKeyDown={(event) => {
                                     if (event.nativeEvent.isComposing) return;
@@ -604,7 +605,7 @@ export function PopoverApp() {
                                   }}
                                 />
                               </span>
-                              <small aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "다시" : ""}</small>
+                              <small aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "오답" : ""}</small>
                             </div>
                           );
                         })}
