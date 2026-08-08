@@ -269,9 +269,9 @@ export function PopoverApp() {
     }));
   };
 
-  const checkWord = (wordIndex: number) => {
+  const checkWord = (wordIndex: number, currentDraft?: string) => {
     if (!song || !activeLine) return;
-    const draft = activeProgress.wordDrafts?.[wordIndex]?.trim() ?? "";
+    const draft = currentDraft?.trim() ?? activeProgress.wordDrafts?.[wordIndex]?.trim() ?? "";
     if (!draft) return;
     const correct = normalizeWordAnswer(draft) === normalizeWordAnswer(activeWords[wordIndex] ?? "");
     const nextResults = [...(activeProgress.wordResults ?? [])];
@@ -515,7 +515,7 @@ export function PopoverApp() {
                           const result = activeProgress.wordResults?.[wordIndex] ?? null;
                           const wordWidth = Math.max(3, Math.min(normalizeWordAnswer(word).length, 18));
                           return (
-                            <div className={`word-token ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`} style={{ width: `calc(${wordWidth}ch + 34px)` }}>
+                            <div className={`word-token ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`} style={{ width: `calc(${wordWidth}ch + 10px)` }}>
                               <span className="word-token-label">{revealed ? word : String(wordIndex + 1).padStart(2, "0")}</span>
                               <span className="word-input-wrap">
                                 <input
@@ -526,16 +526,23 @@ export function PopoverApp() {
                                   value={activeProgress.wordDrafts?.[wordIndex] ?? ""}
                                   placeholder="…"
                                   onChange={(event) => setWordDraft(wordIndex, event.target.value)}
-                                  onKeyDown={(event) => { if (event.key === "Enter") checkWord(wordIndex); }}
+                                  onKeyDown={(event) => {
+                                    if (event.nativeEvent.isComposing) return;
+                                    if (event.code === "Space") {
+                                      event.preventDefault();
+                                      checkWord(wordIndex, event.currentTarget.value);
+                                    } else if (event.key === "Enter") {
+                                      checkWord(wordIndex, event.currentTarget.value);
+                                    }
+                                  }}
                                 />
-                                <button type="button" aria-label={`${wordIndex + 1}번째 어절 확인`} onClick={() => checkWord(wordIndex)}><Check size={14} /></button>
                               </span>
                               <small aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "다시" : ""}</small>
                             </div>
                           );
                         })}
                       </div>
-                      <div className="word-practice-foot"><span>대소문자와 문장부호는 채점에 영향을 주지 않습니다.</span><span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span></div>
+                      <div className="word-practice-foot"><span><kbd>Space</kbd> 또는 <kbd>Enter</kbd>로 확인 · 정답이면 다음 어절</span><span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span></div>
                     </div>
                   )
                 ) : null}
