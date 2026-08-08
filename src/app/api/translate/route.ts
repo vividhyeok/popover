@@ -19,21 +19,14 @@ const normalizeLine = (line: string) =>
   line.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
 
 async function requestDeepSeek(apiKey: string, body: Record<string, unknown>) {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      return await fetch("https://api.deepseek.com/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90000),
-      });
-    } catch (error) {
-      lastError = error;
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 900));
-    }
-  }
-  throw lastError;
+  return fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+    // Keep each serverless invocation below a 10-second ceiling. Retries happen
+    // in the browser as fresh API requests so one invocation never accumulates them.
+    signal: AbortSignal.timeout(8500),
+  });
 }
 
 export async function POST(request: Request) {
@@ -104,7 +97,7 @@ Translate only lines ${startIndex + 1} through ${endIndex}. Return exactly ${bat
     });
   } catch {
     return NextResponse.json(
-      { error: "DeepSeek 서버 연결 시간이 초과됐습니다. 이미 받은 번역은 저장되어 있으니 잠시 뒤 다시 누르면 이어집니다.", code: "UPSTREAM_TIMEOUT" },
+      { error: "DeepSeek 연결 시간이 초과됐습니다. 같은 8줄을 새 요청으로 다시 시도합니다.", code: "UPSTREAM_TIMEOUT" },
       { status: 504 },
     );
   }

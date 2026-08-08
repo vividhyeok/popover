@@ -329,21 +329,33 @@ export function PopoverApp() {
       let mood = "";
       for (let batchStart = startIndex; batchStart < total; batchStart += batchSize) {
         const batchEnd = Math.min(batchStart + batchSize, total);
-        const response = await fetch("/api/translate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: target.title,
-            artist: target.artist,
-            lyrics: target.lyrics.map((line) => line.english),
-            startIndex: batchStart,
-            endIndex: batchEnd,
-            existingTranslations: workingTranslations,
-            existingNotes: workingNotes,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error ?? "번역 요청에 실패했습니다.");
+        let data: { translations: string[]; studyNotes?: Array<string | null>; mood?: string; error?: string; code?: string } | null = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const response = await fetch("/api/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: target.title,
+              artist: target.artist,
+              lyrics: target.lyrics.map((line) => line.english),
+              startIndex: batchStart,
+              endIndex: batchEnd,
+              existingTranslations: workingTranslations,
+              existingNotes: workingNotes,
+            }),
+          });
+          const result = await response.json();
+          if (response.ok) {
+            data = result;
+            break;
+          }
+          const retryable = result.code === "UPSTREAM_TIMEOUT" || result.code === "PARTIAL_BATCH";
+          if (!retryable || attempt === 2) throw new Error(result.error ?? "번역 요청에 실패했습니다.");
+          setTranslationProgress({ completed: workingTranslations.filter(Boolean).length, total });
+          showToast(`${batchStart + 1}~${batchEnd}줄 새 요청 재시도 ${attempt + 1}/2`);
+          await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+        }
+        if (!data) throw new Error("번역 응답을 받지 못했습니다.");
 
         data.translations.forEach((translation: string, index: number) => {
           workingTranslations[batchStart + index] = translation;
