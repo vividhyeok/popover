@@ -5,8 +5,10 @@
 import {
   AlertCircle,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleCheck,
   Clock3,
   ExternalLink,
@@ -52,6 +54,7 @@ export function PopoverApp() {
   const [playing, setPlaying] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
   const [mode, setMode] = useState<StudyMode>("listen");
+  const [dictationLineIndex, setDictationLineIndex] = useState<number | null>(null);
   const [loopLine, setLoopLine] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [revealed, setRevealed] = useState(false);
@@ -82,7 +85,7 @@ export function PopoverApp() {
   );
 
   const effectiveTime = currentTime + (song?.syncOffsetMs ?? 0) / 1000;
-  const activeIndex = useMemo(() => {
+  const trackedIndex = useMemo(() => {
     if (!song?.lyrics.length) return -1;
     let result = -1;
     for (let index = 0; index < song.lyrics.length; index += 1) {
@@ -91,10 +94,17 @@ export function PopoverApp() {
     }
     return result;
   }, [effectiveTime, song]);
+  const activeIndex = mode === "dictation" && dictationLineIndex !== null
+    ? Math.max(0, Math.min(dictationLineIndex, (song?.lyrics.length ?? 1) - 1))
+    : trackedIndex;
   const activeLine = song?.lyrics[activeIndex];
   const activeWords = useMemo(() => activeLine?.english.trim().split(/\s+/).filter(Boolean) ?? [], [activeLine?.english]);
   const activeLineIsSection = isSectionLine(activeLine?.english ?? "");
   const duration = playerDuration || song?.duration || song?.lyrics.at(-1)?.end || 0;
+
+  useEffect(() => {
+    setDictationLineIndex(mode === "dictation" ? Math.max(trackedIndex, 0) : null);
+  }, [mode, song?.id]);
 
   const updateSong = useCallback((id: string, updater: (value: Song) => Song) => {
     setApp((state) => ({ ...state, songs: state.songs.map((item) => (item.id === id ? updater(item) : item)) }));
@@ -189,11 +199,12 @@ export function PopoverApp() {
     [seekTo, song],
   );
 
-  const advanceToNextStudyLine = useCallback(() => {
+  const navigateToLine = useCallback((index: number) => {
     if (!song) return;
-    const nextIndex = song.lyrics.findIndex((line, index) => index > activeIndex && !isSectionLine(line.english));
-    if (nextIndex >= 0) seekLine(nextIndex);
-  }, [activeIndex, seekLine, song]);
+    const safeIndex = Math.max(0, Math.min(index, song.lyrics.length - 1));
+    if (mode === "dictation") setDictationLineIndex(safeIndex);
+    seekLine(safeIndex);
+  }, [mode, seekLine, song]);
 
   const togglePlayback = useCallback(() => {
     if (!song) return;
@@ -202,9 +213,20 @@ export function PopoverApp() {
   }, [song]);
 
   useEffect(() => {
-    if (!loopLine || !playing || !activeLine || !song) return;
-    if (effectiveTime >= activeLine.end - 0.08) seekLine(activeIndex);
-  }, [activeIndex, activeLine, effectiveTime, loopLine, playing, seekLine, song]);
+    if (!playing || !activeLine || !song) return;
+    const isDictationLine = mode === "dictation" && !isSectionLine(activeLine.english);
+    const lineCompleted = Boolean(song.progress.lineProgress[activeLine.id]?.completed);
+    const shouldRepeat = isDictationLine ? !lineCompleted : mode === "listen" && loopLine;
+    const shouldHold = isDictationLine && lineCompleted;
+    if (effectiveTime < activeLine.end - 0.12) return;
+    if (shouldRepeat) {
+      seekLine(activeIndex);
+    } else if (shouldHold) {
+      if (song.videoId) playerRef.current?.pause();
+      else setPlaying(false);
+      seekTo(activeLine.end - song.syncOffsetMs / 1000 - 0.08);
+    }
+  }, [activeIndex, activeLine, effectiveTime, loopLine, mode, playing, seekLine, seekTo, song]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -213,13 +235,13 @@ export function PopoverApp() {
       if (event.code === "Space") {
         event.preventDefault();
         togglePlayback();
-      } else if (event.key.toLowerCase() === "j") seekLine(activeIndex - 1);
-      else if (event.key.toLowerCase() === "k") seekLine(activeIndex + 1);
-      else if (event.key.toLowerCase() === "r") setLoopLine((value) => !value);
+      } else if (mode === "listen" && event.key.toLowerCase() === "j") seekLine(activeIndex - 1);
+      else if (mode === "listen" && event.key.toLowerCase() === "k") seekLine(activeIndex + 1);
+      else if (mode === "listen" && event.key.toLowerCase() === "r") setLoopLine((value) => !value);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeIndex, seekLine, togglePlayback]);
+  }, [activeIndex, mode, seekLine, togglePlayback]);
 
   const setRate = (rate: number) => {
     setPlaybackRate(rate);
@@ -509,7 +531,7 @@ export function PopoverApp() {
 
                 {mode === "dictation" && activeLine ? (
                   activeLineIsSection ? (
-                    <div className="section-line-skip"><span>이 줄은 곡의 구간 표시라 받아쓰기에서 제외됩니다.</span><button onClick={advanceToNextStudyLine}>다음 문장 <ChevronRight size={14} /></button></div>
+                    <div className="section-line-skip"><span>이 줄은 곡의 구간 표시입니다. 위·아래 문장 버튼이나 오른쪽 목록으로 이동하세요.</span></div>
                   ) : (
                     <div className="word-practice">
                       <div className="word-practice-head">
@@ -536,7 +558,6 @@ export function PopoverApp() {
                                     if (event.nativeEvent.isComposing) return;
                                     if (event.key === "Enter" && activeWordsCompleted) {
                                       event.preventDefault();
-                                      advanceToNextStudyLine();
                                     } else if (event.code === "Space") {
                                       event.preventDefault();
                                       checkWord(wordIndex, event.currentTarget.value);
@@ -551,7 +572,7 @@ export function PopoverApp() {
                           );
                         })}
                       </div>
-                      <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}><span>{activeWordsCompleted ? <><kbd>Enter</kbd> 문장 확정 후 다음 문장</> : <><kbd>Space</kbd> 또는 <kbd>Enter</kbd>로 어절 확인</>}</span><span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span></div>
+                      <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}><span>{activeWordsCompleted ? "문장 완료 · 위·아래 버튼 또는 오른쪽 목록으로 이동" : <><kbd>Space</kbd> 또는 <kbd>Enter</kbd>로 어절 확인 · 미완료 구간 자동 반복</>}</span><span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span></div>
                     </div>
                   )
                 ) : null}
@@ -576,12 +597,12 @@ export function PopoverApp() {
                   <span>{formatTime(duration)}</span>
                 </div>
                 <div className="primary-controls">
-                  <button className="round-control" aria-label="이전 문장" onClick={() => seekLine(activeIndex - 1)}><ChevronLeft size={23} /></button>
+                  <button className="round-control" aria-label="이전 문장" onClick={() => navigateToLine(activeIndex - 1)}>{mode === "dictation" ? <ChevronUp size={23} /> : <ChevronLeft size={23} />}</button>
                   <button className="play-control" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}</button>
-                  <button className="round-control" aria-label="다음 문장" onClick={() => seekLine(activeIndex + 1)}><ChevronRight size={23} /></button>
+                  <button className="round-control" aria-label="다음 문장" onClick={() => navigateToLine(activeIndex + 1)}>{mode === "dictation" ? <ChevronDown size={23} /> : <ChevronRight size={23} />}</button>
                 </div>
                 <div className="utility-controls">
-                  <button className={loopLine ? "utility-button active" : "utility-button"} onClick={() => setLoopLine((value) => !value)}><RotateCcw size={15} /> 문장 반복</button>
+                  <button className={mode === "dictation" || loopLine ? "utility-button active" : "utility-button"} disabled={mode === "dictation"} onClick={() => setLoopLine((value) => !value)}><RotateCcw size={15} /> {mode === "dictation" ? "미완료 구간 자동 반복" : "문장 반복"}</button>
                   <label className="rate-control"><span>속도</span><select value={playbackRate} onChange={(event) => setRate(Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1.0×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option></select></label>
                   <span className={song.videoId && !playerReady ? "ready-state pending" : "ready-state"}>{song.videoId && !playerReady ? "플레이어 연결 중" : "준비됨"}</span>
                 </div>
@@ -613,7 +634,7 @@ export function PopoverApp() {
               const progress = song.progress.lineProgress[line.id];
               const isActive = index === activeIndex;
               return (
-                <button className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => seekLine(index)}>
+                <button className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => navigateToLine(index)}>
                   <span className="line-index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="line-body">
                     {mode === "listen" ? <span className="line-english">{line.english}</span> : null}
@@ -625,7 +646,7 @@ export function PopoverApp() {
             })}
           </div>
 
-          <div className="shortcut-bar"><Keyboard size={15} /><span><kbd>Space</kbd> 재생</span><span><kbd>J</kbd>/<kbd>K</kbd> 문장 이동</span><span><kbd>R</kbd> 반복</span>{mode === "dictation" ? <em>영어 정답과 NOTE는 이 목록에서 숨김</em> : null}</div>
+          <div className="shortcut-bar"><Keyboard size={15} /><span><kbd>Space</kbd> 재생</span>{mode === "listen" ? <><span><kbd>J</kbd>/<kbd>K</kbd> 문장 이동</span><span><kbd>R</kbd> 반복</span></> : <em>문장 이동은 위·아래 버튼 또는 오른쪽 목록만 사용</em>}</div>
         </section>
       </div>
 

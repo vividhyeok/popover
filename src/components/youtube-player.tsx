@@ -149,7 +149,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(function You
       const player = playerRef.current;
       if (!player) return;
       onTime(player.getCurrentTime() || 0, player.getDuration() || 0);
-    }, 150);
+    }, 60);
     return () => window.clearInterval(timer);
   }, [onTime]);
 
