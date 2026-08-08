@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Popover
 
-## Getting Started
+Popover는 PC에서 팝송 한 곡을 문장 단위로 반복해 듣고, 영어 가사를 받아쓰며 공부하는 웹앱입니다. YouTube 영상은 다운로드하지 않고 공식 IFrame Player API로 재생·탐색하며, Genie 동기화 가사와 DeepSeek 전체 맥락 번역을 학습 화면에 결합합니다.
 
-First, run the development server:
+## 핵심 흐름
+
+1. Genie에서 곡과 타임스탬프 가사를 찾거나 LRC를 직접 붙여 넣습니다.
+2. YouTube URL 또는 11자리 영상 ID를 연결합니다.
+3. iframe 플레이어의 현재 시각을 기준으로 가사가 문장별로 자동 이동합니다.
+4. 문장을 클릭하거나 `J`/`K`를 눌러 앞뒤 문장으로 이동하고, 현재 문장을 반복할 수 있습니다.
+5. 듣기 모드에서 원문과 번역을 확인하고, 받아쓰기 모드에서 정답률을 확인합니다.
+6. 곡·번역·싱크 오프셋·받아쓰기 기록은 Local Storage에 자동 저장됩니다.
+
+오디오나 영상 파일은 브라우저에 저장하지 않습니다. 따라서 저장 공간 대부분은 텍스트 데이터이며, 기본 보관함 한도는 8곡입니다. 설정에서 3/5/8/10/12곡 중 선택할 수 있고, 한도에 도달하면 기존 곡을 삭제한 뒤 다시 등록할 수 있습니다.
+
+## YouTube 재생 방식
+
+Popover는 `yt-dlp`를 사용하지 않습니다. YouTube IFrame Player API의 다음 기능만 사용합니다.
+
+- `getCurrentTime()`으로 현재 문장 추적
+- `seekTo()`로 문장 클릭, 이전/다음 문장, 구간 반복
+- `setPlaybackRate()`로 0.75×~1.5× 속도 조정
+- 기본 iframe 컨트롤로 음량, 자막, 전체 화면 제어
+
+URL/영상 ID 등록은 별도 Google API 키가 필요하지 않습니다. 앱 내부 YouTube 검색까지 사용하려면 선택적으로 `YOUTUBE_API_KEY`를 설정합니다. 키가 없을 때는 YouTube에서 영상을 찾은 뒤 URL을 붙여 넣으면 됩니다.
+
+MV·라이브·가사 영상은 음원 버전과 인트로 길이가 다를 수 있습니다. 이때 다음 두 단계로 싱크를 맞춥니다.
+
+- 곡 전체 오프셋: ±100ms 버튼 또는 숫자 입력으로 모든 문장을 함께 이동
+- 문장 시작점: 재생 중 `현재 위치로 시작점 찍기`를 눌러 활성 문장만 보정
+
+## 번역 원칙
+
+번역은 호출 비용보다 첫 결과의 품질이 중요한 작업이라 기본 모델을 `deepseek-v4-pro`로 설정했습니다. 곡을 등록할 때 전체 가사를 한 번에 보내고, 결과를 곡 데이터와 함께 Local Storage에 저장합니다. 이후 재생이나 재접속으로 번역 API를 다시 호출하지 않습니다. 사용자가 이미 번역된 곡에서 `전체 번역`을 다시 눌러 덮어쓰기를 확인한 경우에만 재호출합니다.
+
+DeepSeek에는 다음 학습용 번역 계약을 적용합니다.
+
+- 곡 전체를 먼저 읽고 대명사, 서사, 정서, 반복 모티프, 화자 관계를 일관되게 판단합니다.
+- 원문 한 줄과 번역 한 줄을 반드시 1:1로 유지합니다. 줄을 합치거나 나누거나 순서를 바꾸지 않습니다.
+- 완전히 같은 반복 문장은 같은 번역과 같은 학습 메모를 사용합니다. 모델 응답 후 서버에서도 이를 한 번 더 고정합니다.
+- 한국어 번역만 읽어도 자연스럽되, 학습자가 영어 원문에 다시 대응시킬 수 있는 직관적인 의역 범위에 머뭅니다.
+- 곡 분위기를 이유로 원문에 없는 이미지나 감정을 덧붙이는 시적 재창작은 하지 않습니다.
+- 슬랭, 축약, 욕설, 방언, 의도적인 비문, 문법 파괴, 말장난의 말투와 의도를 지우지 않습니다. 다만 번역문을 장황하게 만들지 않습니다.
+- 설명이 실제 학습에 도움이 되는 줄에만 짧은 `NOTE`를 표시합니다. 평범한 단어나 모든 문장에 설명을 달지 않습니다.
+
+여기서 “전체 문맥”은 번역의 일관성을 위한 판단 근거이지, 각 문장을 원문과 멀어지게 풀어 쓰기 위한 허가가 아닙니다. 반대로 직역이 슬랭이나 관용 표현의 실제 의미를 깨뜨릴 때는 자연스러운 뜻을 번역에 쓰고, 필요한 근거를 짧은 학습 메모로 분리합니다.
+
+### 번역의 알려진 한계
+
+- 중의적 가사, 고유한 팬덤 맥락, 공개되지 않은 작가 의도는 모델이 확정할 수 없습니다.
+- 발음 때문에 철자를 바꾼 표현이나 여러 언어가 섞인 가사는 메모가 불완전할 수 있습니다.
+- 동일 문장을 다른 의미로 재사용한 매우 드문 경우에도 현재 구현은 학습 일관성을 우선해 같은 번역을 고정합니다.
+- 번역은 학습 보조 자료이며 공식 번역이나 저작권자의 해설을 대체하지 않습니다.
+
+## 로컬 실행
+
+Node.js 20 이상을 권장합니다.
 
 ```bash
+npm install
+copy .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+브라우저에서 `http://localhost:3000`을 엽니다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`.env.local`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL=deepseek-v4-pro
 
-## Learn More
+# 선택 사항
+YOUTUBE_API_KEY=your_youtube_data_api_key
+```
 
-To learn more about Next.js, take a look at the following resources:
+DeepSeek 키는 서버 라우트에서만 읽으므로 클라이언트 번들에 포함되지 않습니다.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Vercel 배포
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Vercel 프로젝트의 Settings → Environment Variables에 `DEEPSEEK_API_KEY`를 등록합니다. 모델을 명시하려면 `DEEPSEEK_MODEL=deepseek-v4-pro`를 추가합니다. 앱 내부 YouTube 검색이 필요할 때만 `YOUTUBE_API_KEY`를 추가합니다.
 
-## Deploy on Vercel
+```bash
+npm run build
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+그 다음 저장소를 Vercel에 연결하면 됩니다. Local Storage 데이터는 브라우저와 도메인별로 분리되므로 `localhost`에서 만든 학습 기록이 배포 도메인으로 자동 이동하지는 않습니다.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 데이터와 저작권
+
+사용자가 등록한 가사와 번역은 해당 브라우저의 Local Storage에만 저장됩니다. DeepSeek 번역을 실행할 때는 곡명, 아티스트, 가사 원문이 DeepSeek API로 전송됩니다. YouTube 영상은 YouTube의 iframe 정책과 해당 영상의 공개/임베드 허용 상태를 따릅니다. 사용자는 자신이 이용할 권한이 있는 가사를 개인 학습 범위에서 사용해야 합니다.
+
+## 원형 프로젝트에서 가져온 핵심
+
+이 웹 버전은 `han-eng-lyricvideo-maker`의 Genie 검색·동기화 LRC 처리·전체 가사 번역·수동 싱크 아이디어를 학습 UX로 재구성했습니다. 원형의 yt-dlp 다운로드와 영상 렌더링 파이프라인은 가져오지 않았고, YouTube iframe 기반의 비파괴 재생 방식으로 바꿨습니다.
