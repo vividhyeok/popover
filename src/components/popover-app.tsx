@@ -36,6 +36,7 @@ import type { PersistedState, Song, StudyMode } from "@/lib/types";
 import { YouTubePlayer, type YouTubePlayerHandle } from "./youtube-player";
 
 type Toast = { message: string; tone?: "normal" | "error" | "success" };
+type TranslationProgress = { completed: number; total: number; error?: string };
 type GenieResult = { id: string; title: string; artist: string };
 type YouTubeResult = { videoId: string; title: string; artist: string; thumbnail: string };
 
@@ -56,6 +57,7 @@ export function PopoverApp() {
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
   const activeRowRef = useRef<HTMLButtonElement>(null);
   const dictationRef = useRef<HTMLInputElement>(null);
@@ -115,6 +117,7 @@ export function PopoverApp() {
     setPlayerDuration(song.duration || 0);
     setPlaying(false);
     setRevealed(false);
+    setTranslationProgress(null);
   }, [song?.id]);
 
   useEffect(() => {
@@ -300,26 +303,69 @@ export function PopoverApp() {
   const translateSong = async (target: Song) => {
     const alreadyTranslated = target.lyrics.length > 0 && target.lyrics.every((line) => Boolean(line.korean));
     if (alreadyTranslated && !window.confirm("저장된 전체 번역이 있습니다. DeepSeek로 다시 번역해 덮어쓸까요?")) return;
-    setTranslating(true);
-    try {
-      const response = await fetch("/api/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: target.title, artist: target.artist, lyrics: target.lyrics.map((line) => line.english) }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
+
+    const total = target.lyrics.length;
+    const batchSize = 8;
+    const workingTranslations: Array<string | null> = target.lyrics.map((line) => line.korean ?? null);
+    const workingNotes: Array<string | null> = target.lyrics.map((line) => line.note ?? null);
+
+    if (alreadyTranslated) {
+      workingTranslations.fill(null);
+      workingNotes.fill(null);
       updateSong(target.id, (value) => ({
         ...value,
-        lyrics: value.lyrics.map((line, index) => ({
-          ...line,
-          korean: data.translations[index],
-          note: data.studyNotes?.[index] || undefined,
-        })),
+        lyrics: value.lyrics.map((line) => ({ ...line, korean: undefined, note: undefined })),
       }));
-      showToast(data.mood ? `번역 완료 · ${data.mood}` : "곡 전체 맥락 번역을 완료했습니다.", "success");
+    }
+
+    let startIndex = workingTranslations.findIndex((translation) => !translation);
+    if (startIndex < 0) startIndex = 0;
+    const initiallyCompleted = workingTranslations.filter(Boolean).length;
+    setTranslating(true);
+    setTranslationProgress({ completed: initiallyCompleted, total });
+    showToast(`곡 전체 문맥을 유지하면서 ${batchSize}줄씩 번역합니다.`);
+
+    try {
+      let mood = "";
+      for (let batchStart = startIndex; batchStart < total; batchStart += batchSize) {
+        const batchEnd = Math.min(batchStart + batchSize, total);
+        const response = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: target.title,
+            artist: target.artist,
+            lyrics: target.lyrics.map((line) => line.english),
+            startIndex: batchStart,
+            endIndex: batchEnd,
+            existingTranslations: workingTranslations,
+            existingNotes: workingNotes,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? "번역 요청에 실패했습니다.");
+
+        data.translations.forEach((translation: string, index: number) => {
+          workingTranslations[batchStart + index] = translation;
+          workingNotes[batchStart + index] = data.studyNotes?.[index] || null;
+        });
+        mood ||= data.mood ?? "";
+
+        updateSong(target.id, (value) => ({
+          ...value,
+          lyrics: value.lyrics.map((line, index) => ({
+            ...line,
+            korean: workingTranslations[index] ?? line.korean,
+            note: workingNotes[index] ?? undefined,
+          })),
+        }));
+        setTranslationProgress({ completed: workingTranslations.filter(Boolean).length, total });
+      }
+      showToast(mood ? `번역 완료 · ${mood}` : "곡 전체 맥락 번역을 완료했습니다.", "success");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "번역에 실패했습니다.", "error");
+      const message = error instanceof Error ? error.message : "번역에 실패했습니다.";
+      setTranslationProgress({ completed: workingTranslations.filter(Boolean).length, total, error: message });
+      showToast(message, "error");
     } finally {
       setTranslating(false);
     }
@@ -456,10 +502,11 @@ export function PopoverApp() {
           <div className="lyrics-toolbar">
             <div><p className="eyebrow">LYRIC TRACKER</p><h2>문장 트래킹</h2></div>
             <div className="toolbar-actions">
-              <button className="translate-button" disabled={!song || translating} onClick={() => song && void translateSong(song)}>{translating ? <Loader2 className="spin" size={15} /> : <Languages size={15} />} 전체 번역</button>
+              <button className="translate-button" disabled={!song || translating} onClick={() => song && void translateSong(song)}>{translating ? <Loader2 className="spin" size={15} /> : <Languages size={15} />} {translating && translationProgress ? `${translationProgress.completed}/${translationProgress.total} 번역 중` : song?.lyrics.some((line) => !line.korean) && song?.lyrics.some((line) => line.korean) ? "번역 이어하기" : "전체 번역"}</button>
               <div className="mode-switch"><button className={mode === "listen" ? "active" : ""} onClick={() => setMode("listen")}>듣기</button><button className={mode === "dictation" ? "active" : ""} onClick={() => setMode("dictation")}>받아쓰기</button></div>
             </div>
           </div>
+          {translationProgress ? <div className={translationProgress.error ? "translation-status error" : "translation-status"}>{translationProgress.error ? <><AlertCircle size={14} /><span><b>{translationProgress.completed}/{translationProgress.total}줄까지 저장됨</b> · {translationProgress.error} 다시 누르면 이어서 번역합니다.</span></> : translating ? <><Loader2 className="spin" size={14} /><span><b>{translationProgress.completed}/{translationProgress.total}줄 번역 완료</b> · 받은 문장부터 바로 저장하고 있습니다.</span></> : null}</div> : <div className="translation-status" />}
           <div className="progress-strip"><span><b>{completedCount}</b> / {song?.lyrics.length ?? 0} 문장 완료</span><div><i style={{ width: `${song?.lyrics.length ? (completedCount / song.lyrics.length) * 100 : 0}%` }} /></div></div>
 
           <div className="lyrics-scroll">
