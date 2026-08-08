@@ -23,7 +23,6 @@ import {
   RotateCcw,
   Search,
   Settings2,
-  SlidersHorizontal,
   Sparkles,
   Trash2,
   X,
@@ -62,7 +61,6 @@ export function PopoverApp() {
   const [translationImportOpen, setTranslationImportOpen] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
-  const [syncTargetLineId, setSyncTargetLineId] = useState<string | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
   const activeRowRef = useRef<HTMLButtonElement>(null);
   const wordInputRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -86,10 +84,10 @@ export function PopoverApp() {
 
   const effectiveTime = currentTime + (song?.syncOffsetMs ?? 0) / 1000;
   const activeIndex = useMemo(() => {
-    if (!song?.lyrics.length) return 0;
-    let result = 0;
+    if (!song?.lyrics.length) return -1;
+    let result = -1;
     for (let index = 0; index < song.lyrics.length; index += 1) {
-      if (song.lyrics[index].start <= effectiveTime + 0.02) result = index;
+      if (song.lyrics[index].start <= effectiveTime) result = index;
       else break;
     }
     return result;
@@ -125,7 +123,6 @@ export function PopoverApp() {
     setPlaying(false);
     setRevealed(false);
     setTranslationProgress(null);
-    setSyncTargetLineId(null);
   }, [song?.id]);
 
   useEffect(() => {
@@ -161,7 +158,7 @@ export function PopoverApp() {
     setRevealed(false);
     window.requestAnimationFrame(() => {
       activeRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      if (mode === "dictation") wordInputRefs.current.find(Boolean)?.focus();
+      if (mode === "dictation") wordInputRefs.current.find(Boolean)?.focus({ preventScroll: true });
     });
   }, [activeIndex, mode, song?.id, updateSong]);
 
@@ -194,16 +191,6 @@ export function PopoverApp() {
     [seekTo, song],
   );
 
-  const selectAndSeekLine = useCallback(
-    (index: number) => {
-      if (!song) return;
-      const safeIndex = Math.max(0, Math.min(index, song.lyrics.length - 1));
-      setSyncTargetLineId(song.lyrics[safeIndex]?.id ?? null);
-      seekLine(safeIndex);
-    },
-    [seekLine, song],
-  );
-
   const togglePlayback = useCallback(() => {
     if (!song) return;
     if (song.videoId) playerRef.current?.toggle();
@@ -222,13 +209,13 @@ export function PopoverApp() {
       if (event.code === "Space") {
         event.preventDefault();
         togglePlayback();
-      } else if (event.key.toLowerCase() === "j") selectAndSeekLine(activeIndex - 1);
-      else if (event.key.toLowerCase() === "k") selectAndSeekLine(activeIndex + 1);
+      } else if (event.key.toLowerCase() === "j") seekLine(activeIndex - 1);
+      else if (event.key.toLowerCase() === "k") seekLine(activeIndex + 1);
       else if (event.key.toLowerCase() === "r") setLoopLine((value) => !value);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeIndex, selectAndSeekLine, togglePlayback]);
+  }, [activeIndex, seekLine, togglePlayback]);
 
   const setRate = (rate: number) => {
     setPlaybackRate(rate);
@@ -241,46 +228,21 @@ export function PopoverApp() {
 
   const setOffset = (offset: number) => {
     if (!song) return;
-    updateSong(song.id, (value) => ({ ...value, syncOffsetMs: Math.max(-10000, Math.min(10000, offset)) }));
+    updateSong(song.id, (value) => ({ ...value, syncOffsetMs: Math.max(-120000, Math.min(120000, offset)) }));
   };
 
-  const stampActiveLine = () => {
-    if (!song || !activeLine) return;
-    const targetIndex = syncTargetLineId
-      ? song.lyrics.findIndex((line) => line.id === syncTargetLineId)
-      : activeIndex;
-    if (targetIndex < 0) return;
+  const alignFirstLyricToCurrentTime = () => {
+    if (!song?.lyrics[0]) return;
     const exactPlayerTime = song.videoId && playerReady
       ? (playerRef.current?.getCurrentTime() ?? currentTimeRef.current)
       : currentTimeRef.current;
-    const stampedStart = Math.max(0, exactPlayerTime + song.syncOffsetMs / 1000);
-    const previousStart = song.lyrics[targetIndex - 1]?.start ?? -0.1;
-    const nextStart = song.lyrics[targetIndex + 1]?.start;
-    if (stampedStart <= previousStart + 0.04 || (nextStart !== undefined && stampedStart >= nextStart - 0.04)) {
-      showToast("선택한 문장의 앞뒤 구간을 벗어났습니다. 먼저 전체 타이밍을 맞춘 뒤 다시 찍어주세요.", "error");
-      return;
-    }
-    updateSong(song.id, (value) => ({
-      ...value,
-      lyrics: value.lyrics.map((line, index) =>
-        index === targetIndex
-          ? {
-              ...line,
-              start: stampedStart,
-            }
-          : index === targetIndex - 1
-            ? { ...line, end: stampedStart }
-          : line,
-      ),
-    }));
-    setSyncTargetLineId(null);
-    showToast(`LINE ${targetIndex + 1} 시작점을 ${formatTime(exactPlayerTime)}에 저장했습니다.`, "success");
+    const nextOffsetMs = Math.round((song.lyrics[0].start - exactPlayerTime) * 1000);
+    setOffset(nextOffsetMs);
+    showToast(`첫 가사가 영상 ${formatTime(exactPlayerTime)}부터 시작하도록 맞췄습니다.`, "success");
   };
 
-  const storedSyncTargetIndex = syncTargetLineId ? song?.lyrics.findIndex((line) => line.id === syncTargetLineId) : -1;
-  const syncTargetIndex = storedSyncTargetIndex !== undefined && storedSyncTargetIndex >= 0 ? storedSyncTargetIndex : activeIndex;
-  const syncTargetLine = song?.lyrics[syncTargetIndex];
   const offsetSeconds = (song?.syncOffsetMs ?? 0) / 1000;
+  const firstLyricVideoTime = song?.lyrics[0] ? Math.max(0, song.lyrics[0].start - offsetSeconds) : 0;
 
   const activeProgress = activeLine
     ? song?.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS
@@ -338,7 +300,7 @@ export function PopoverApp() {
     });
     if (!correct) return;
     const nextWordIndex = activeWords.findIndex((_, index) => index > wordIndex && nextResults[index] !== "correct");
-    if (nextWordIndex >= 0) window.requestAnimationFrame(() => wordInputRefs.current[nextWordIndex]?.focus());
+    if (nextWordIndex >= 0) window.requestAnimationFrame(() => wordInputRefs.current[nextWordIndex]?.focus({ preventScroll: true }));
     if (completed) showToast("모든 어절을 맞혔어요.", "success");
     if (completed && app.settings.autoAdvance && activeIndex < song.lyrics.length - 1) {
       const nextStudyLine = song.lyrics.findIndex((line, index) => index > activeIndex && !isSectionLine(line.english));
@@ -535,13 +497,13 @@ export function PopoverApp() {
               </div>
 
               <div className={`focus-line-card ${mode === "dictation" ? "dictation-focus" : ""}`}>
-                <div className="focus-line-meta"><span>LINE {String(activeIndex + 1).padStart(2, "0")}</span><span>{formatTime(activeLine?.start ?? 0)}</span></div>
-                {mode === "listen" ? <p className="focus-english">{activeLine?.english ?? "가사를 등록해주세요."}</p> : <span className="focus-purpose-label">한국어 의미만 보고, 들리는 어절을 하나씩 입력하세요</span>}
-                <p className="focus-korean">{activeLine?.korean ?? "번역을 가져오면 한국어 의미가 표시됩니다."}</p>
+                <div className="focus-line-meta"><span>{activeLine ? `LINE ${String(activeIndex + 1).padStart(2, "0")}` : "WAITING"}</span><span>{activeLine ? formatTime(activeLine.start) : `첫 가사 ${formatTime(firstLyricVideoTime)}`}</span></div>
+                {mode === "listen" ? <p className="focus-english">{activeLine?.english ?? "첫 가사를 기다리는 중"}</p> : activeLine ? <span className="focus-purpose-label">한국어 의미만 보고, 들리는 어절을 하나씩 입력하세요</span> : null}
+                <p className="focus-korean">{activeLine?.korean ?? (song.lyrics.length ? `${formatTime(firstLyricVideoTime)}부터 문장 트래킹을 시작합니다.` : "번역을 가져오면 한국어 의미가 표시됩니다.")}</p>
 
                 {mode === "dictation" && activeLine ? (
                   activeLineIsSection ? (
-                    <div className="section-line-skip"><span>이 줄은 곡의 구간 표시라 받아쓰기에서 제외됩니다.</span><button onClick={() => selectAndSeekLine(activeIndex + 1)}>다음 문장 <ChevronRight size={14} /></button></div>
+                    <div className="section-line-skip"><span>이 줄은 곡의 구간 표시라 받아쓰기에서 제외됩니다.</span><button onClick={() => seekLine(activeIndex + 1)}>다음 문장 <ChevronRight size={14} /></button></div>
                   ) : (
                     <div className="word-practice">
                       <div className="word-practice-head">
@@ -578,13 +540,17 @@ export function PopoverApp() {
                   )
                 ) : null}
 
-                {activeLine?.note ? (
-                  mode === "dictation" ? (
-                    <details className="focus-note"><summary>STUDY NOTE 보기 <span>막힐 때만 열어보세요</span></summary><p>{activeLine.note}</p></details>
+                <div className="focus-note-slot">
+                  {activeLine?.note ? (
+                    mode === "dictation" ? (
+                      <details className="focus-note"><summary>STUDY NOTE 보기 <span>막힐 때만 열어보세요</span></summary><p>{activeLine.note}</p></details>
+                    ) : (
+                      <div className="focus-note open"><b>STUDY NOTE</b><p>{activeLine.note}</p></div>
+                    )
                   ) : (
-                    <div className="focus-note open"><b>STUDY NOTE</b><p>{activeLine.note}</p></div>
-                  )
-                ) : null}
+                    <div className="focus-note empty"><b>STUDY NOTE</b><p>이 문장에는 추가 학습 메모가 없습니다.</p></div>
+                  )}
+                </div>
               </div>
 
               <div className="transport-card">
@@ -594,9 +560,9 @@ export function PopoverApp() {
                   <span>{formatTime(duration)}</span>
                 </div>
                 <div className="primary-controls">
-                  <button className="round-control" aria-label="이전 문장" onClick={() => selectAndSeekLine(activeIndex - 1)}><ChevronLeft size={23} /></button>
+                  <button className="round-control" aria-label="이전 문장" onClick={() => seekLine(activeIndex - 1)}><ChevronLeft size={23} /></button>
                   <button className="play-control" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}</button>
-                  <button className="round-control" aria-label="다음 문장" onClick={() => selectAndSeekLine(activeIndex + 1)}><ChevronRight size={23} /></button>
+                  <button className="round-control" aria-label="다음 문장" onClick={() => seekLine(activeIndex + 1)}><ChevronRight size={23} /></button>
                 </div>
                 <div className="utility-controls">
                   <button className={loopLine ? "utility-button active" : "utility-button"} onClick={() => setLoopLine((value) => !value)}><RotateCcw size={15} /> 문장 반복</button>
@@ -605,29 +571,9 @@ export function PopoverApp() {
                 </div>
               </div>
 
-              <div className="sync-card">
-                <div className="sync-card-head">
-                  <div className="sync-title"><SlidersHorizontal size={16} /><div><b>가사 타이밍</b><small>음성과 가사가 어긋날 때 초 단위로 맞춥니다.</small></div></div>
-                  <div className="sync-offset-value"><span>전체 보정</span><button onClick={() => setOffset(0)} title="전체 보정 초기화">{offsetSeconds > 0 ? "+" : ""}{offsetSeconds.toFixed(1)}초</button></div>
-                </div>
-                <div className="timing-adjuster">
-                  <span className="timing-direction">가사를 늦게</span>
-                  <button onClick={() => setOffset(song.syncOffsetMs - 500)}>0.5초</button>
-                  <button onClick={() => setOffset(song.syncOffsetMs - 100)}>0.1초</button>
-                  <i />
-                  <button onClick={() => setOffset(song.syncOffsetMs + 100)}>0.1초</button>
-                  <button onClick={() => setOffset(song.syncOffsetMs + 500)}>0.5초</button>
-                  <span className="timing-direction right">가사를 빠르게</span>
-                </div>
-                <div className="line-stamp-row">
-                  <div className="stamp-target">
-                    <span>{syncTargetLineId ? "고정된 조정 문장" : "현재 추적 문장"} · LINE {String(syncTargetIndex + 1).padStart(2, "0")}</span>
-                    <b>{syncTargetLine?.english ?? "문장을 선택해주세요."}</b>
-                    <small>오른쪽에서 문장을 선택하면 재생 중 다른 줄로 넘어가도 이 대상이 유지됩니다.</small>
-                  </div>
-                  {syncTargetLineId ? <button className="follow-active-button" onClick={() => setSyncTargetLineId(null)}>현재 문장 따라가기</button> : null}
-                  <button className="stamp-button" onClick={stampActiveLine}><Clock3 size={15} /> 이 문장을 현재 위치에 맞추기</button>
-                </div>
+              <div className="sync-card compact">
+                <div className="sync-title"><Clock3 size={16} /><div><b>첫 가사 시작 · {formatTime(firstLyricVideoTime)}</b><small>영상에서 첫 가사가 들리는 순간에 아래 버튼을 누르세요.</small></div></div>
+                <button className="stamp-button" onClick={alignFirstLyricToCurrentTime}>현재 시점을 첫 가사 시작으로 지정</button>
               </div>
             </>
           ) : (
@@ -651,7 +597,7 @@ export function PopoverApp() {
               const progress = song.progress.lineProgress[line.id];
               const isActive = index === activeIndex;
               return (
-                <button ref={isActive ? activeRowRef : undefined} className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""} ${syncTargetLineId === line.id ? "sync-target-row" : ""}`} key={line.id} onClick={() => selectAndSeekLine(index)}>
+                <button ref={isActive ? activeRowRef : undefined} className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => seekLine(index)}>
                   <span className="line-index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="line-body">
                     {mode === "listen" ? <span className="line-english">{line.english}</span> : null}
