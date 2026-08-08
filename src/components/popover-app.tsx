@@ -13,7 +13,6 @@ import {
   Clock3,
   ExternalLink,
   Eye,
-  EyeOff,
   Keyboard,
   Languages,
   Library,
@@ -42,7 +41,7 @@ type GenieResult = { id: string; title: string; artist: string };
 type YouTubeResult = { videoId: string; title: string; artist: string; thumbnail: string };
 type ImportedTranslation = { korean: string; note?: string };
 
-const EMPTY_PROGRESS: LineProgress = { draft: "", wordDrafts: [], wordResults: [], attempts: 0, bestScore: 0, completed: false };
+const EMPTY_PROGRESS: LineProgress = { draft: "", wordDrafts: [], wordResults: [], revealed: false, attempts: 0, bestScore: 0, completed: false };
 const isSectionLine = (english: string) => /^\[[^\]]+\]$/.test(english.trim());
 const normalizeWordAnswer = (value: string) => normalizeAnswer(value).replace(/[\s']/g, "");
 
@@ -57,7 +56,6 @@ export function PopoverApp() {
   const [dictationLineIndex, setDictationLineIndex] = useState<number | null>(null);
   const [loopLine, setLoopLine] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [revealed, setRevealed] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -130,7 +128,6 @@ export function PopoverApp() {
     setCurrentTime(song.progress.position || 0);
     setPlayerDuration(song.duration || 0);
     setPlaying(false);
-    setRevealed(false);
     setTranslationProgress(null);
   }, [song?.id]);
 
@@ -164,7 +161,6 @@ export function PopoverApp() {
       if (value.progress.activeLine === activeIndex) return value;
       return { ...value, progress: { ...value.progress, activeLine: activeIndex, lastStudiedAt: Date.now() } };
     });
-    setRevealed(false);
     window.requestAnimationFrame(() => {
       if (mode === "dictation") wordInputRefs.current.find(Boolean)?.focus({ preventScroll: true });
     });
@@ -278,6 +274,7 @@ export function PopoverApp() {
   const activeProgress = activeLine
     ? song?.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS
     : EMPTY_PROGRESS;
+  const revealed = Boolean(activeProgress.revealed);
 
   const setWordDraft = (wordIndex: number, draft: string) => {
     if (!song || !activeLine) return;
@@ -335,12 +332,8 @@ export function PopoverApp() {
     if (completed) showToast("문장 완료 · 위·아래 버튼이나 오른쪽 목록으로 이동하세요.", "success");
   };
 
-  const toggleAnswerReveal = () => {
-    if (!song || !activeLine) return;
-    if (revealed) {
-      setRevealed(false);
-      return;
-    }
+  const revealAnswer = () => {
+    if (!song || !activeLine || revealed) return;
     updateSong(song.id, (value) => {
       const before = value.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS;
       const wordDrafts = before.wordDrafts ?? [];
@@ -361,6 +354,7 @@ export function PopoverApp() {
             [activeLine.id]: {
               ...before,
               wordResults,
+              revealed: true,
               attempts: before.attempts + 1,
               bestScore: Math.max(before.bestScore, score),
               completed: before.completed || completed,
@@ -369,7 +363,6 @@ export function PopoverApp() {
         },
       };
     });
-    setRevealed(true);
   };
 
   const removeSong = (id: string) => {
@@ -573,7 +566,7 @@ export function PopoverApp() {
                     <div className="word-practice">
                       <div className="word-practice-head">
                         <div><b>어절별 받아쓰기</b><span>{activeProgress.wordResults?.filter((result) => result === "correct").length ?? 0} / {activeWords.length} 정답</span></div>
-                        <button className="reveal-answer-button" onClick={toggleAnswerReveal}>{revealed ? <EyeOff size={14} /> : <Eye size={14} />}{revealed ? "정답 닫기" : "정답 보기"}</button>
+                        <button className="reveal-answer-button" onClick={revealAnswer} disabled={revealed}><Eye size={14} />{revealed ? "정답 공개됨" : "정답 보기"}</button>
                       </div>
                       <div className="word-flow" aria-label="문장 어절별 입력">
                         {activeWords.map((word, wordIndex) => {

@@ -13,6 +13,7 @@ export type LineProgress = {
   draft: string;
   wordDrafts?: string[];
   wordResults?: Array<"correct" | "wrong" | null>;
+  revealed?: boolean;
   attempts: number;
   bestScore: number;
   completed: boolean;
