@@ -86,8 +86,8 @@ Read the entire song before translating so pronouns, narrative, emotional arc, r
 5. Add a study note only for slang, idioms, deliberate grammar, wordplay, or cultural references that materially help learning. Use one short Korean sentence or null.
 6. Do not censor meaning, quote the English inside the Korean translation, or add general commentary.
 
-Return only valid JSON shaped exactly as:
-{"mood":"곡 전체 분위기를 나타내는 짧은 한국어 구절","translations":["..."],"studyNotes":[null,"짧은 메모"]}`,
+Every requested result must carry its absolute 1-based lyric index. Return only valid JSON shaped exactly as:
+{"mood":"곡 전체 분위기를 나타내는 짧은 한국어 구절","lines":[{"index":1,"translation":"번역","studyNote":null}]}`,
         },
         {
           role: "user",
@@ -98,7 +98,7 @@ ${lyrics.map((line, index) => `${index + 1}. ${line}`).join("\n")}
 Confirmed translations from earlier batches:
 ${confirmed || "None yet"}
 
-Translate only lines ${startIndex + 1} through ${endIndex}. Return exactly ${batchLyrics.length} translations and ${batchLyrics.length} studyNotes in that order.`,
+Translate only lines ${startIndex + 1} through ${endIndex}. Return exactly ${batchLyrics.length} objects in the lines array, using the original absolute line numbers ${startIndex + 1} through ${endIndex}.`,
         },
       ],
     });
@@ -122,13 +122,55 @@ Translate only lines ${startIndex + 1} through ${endIndex}. Return exactly ${bat
   try {
     const content = data.choices?.[0]?.message?.content;
     if (!content) throw new Error("empty content");
-    const parsed = JSON.parse(content) as { mood?: string; translations?: unknown[]; studyNotes?: unknown[] };
-    if (!Array.isArray(parsed.translations) || parsed.translations.length !== batchLyrics.length) {
-      throw new Error("line count mismatch");
+    const jsonStart = content.indexOf("{");
+    const jsonEnd = content.lastIndexOf("}");
+    if (jsonStart < 0 || jsonEnd <= jsonStart) throw new Error("missing json object");
+    const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1)) as {
+      mood?: string;
+      lines?: Array<{ index?: unknown; translation?: unknown; studyNote?: unknown; note?: unknown }>;
+      translations?: unknown[];
+      studyNotes?: unknown[];
+    };
+
+    const rawTranslations: unknown[] = Array(batchLyrics.length).fill(undefined);
+    const rawNotes: unknown[] = Array(batchLyrics.length).fill(null);
+
+    if (Array.isArray(parsed.lines)) {
+      for (const item of parsed.lines) {
+        const absoluteIndex = typeof item.index === "number" ? item.index - 1 : Number(item.index) - 1;
+        if (!Number.isInteger(absoluteIndex) || absoluteIndex < startIndex || absoluteIndex >= endIndex) continue;
+        const batchIndex = absoluteIndex - startIndex;
+        rawTranslations[batchIndex] = item.translation;
+        rawNotes[batchIndex] = item.studyNote ?? item.note ?? null;
+      }
+    } else if (Array.isArray(parsed.translations)) {
+      // Some models still return the legacy array shape. Accept either the requested
+      // batch or a full-song array and select the requested range deterministically.
+      const returnedFullSong = parsed.translations.length === lyrics.length;
+      const sourceTranslations = returnedFullSong
+        ? parsed.translations.slice(startIndex, endIndex)
+        : parsed.translations;
+      const sourceNotes = Array.isArray(parsed.studyNotes)
+        ? returnedFullSong
+          ? parsed.studyNotes.slice(startIndex, endIndex)
+          : parsed.studyNotes
+        : [];
+      sourceTranslations.slice(0, batchLyrics.length).forEach((value, index) => {
+        rawTranslations[index] = value;
+        rawNotes[index] = sourceNotes[index] ?? null;
+      });
     }
-    const notes = Array.isArray(parsed.studyNotes) && parsed.studyNotes.length === batchLyrics.length
-      ? parsed.studyNotes.map((note) => (typeof note === "string" && note.trim() ? note.trim() : null))
-      : batchLyrics.map(() => null);
+
+    const missingCount = rawTranslations.filter((value) => typeof value !== "string" || !value.trim()).length;
+    if (missingCount > 0) {
+      const receivedCount = batchLyrics.length - missingCount;
+      return NextResponse.json(
+        { error: `DeepSeek 응답에서 요청한 ${batchLyrics.length}줄 중 ${receivedCount}줄만 확인됐습니다. 다시 누르면 같은 구간을 재시도합니다.`, code: "PARTIAL_BATCH" },
+        { status: 502 },
+      );
+    }
+
+    const notes = rawNotes.map((note) => (typeof note === "string" && note.trim() ? note.trim() : null));
 
     const canonical = new Map<string, { translation: string; note: string | null }>();
     lyrics.forEach((line, index) => {
@@ -136,7 +178,7 @@ Translate only lines ${startIndex + 1} through ${endIndex}. Return exactly ${bat
       if (translation) canonical.set(normalizeLine(line), { translation, note: existingNotes[index] ?? null });
     });
 
-    const translations = parsed.translations.map((translation, batchIndex) => {
+    const translations = rawTranslations.map((translation, batchIndex) => {
       if (typeof translation !== "string" || !translation.trim()) throw new Error("invalid translation");
       const key = normalizeLine(batchLyrics[batchIndex]);
       const existing = canonical.get(key);
