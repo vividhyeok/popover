@@ -223,12 +223,56 @@ export function PopoverApp() {
     [seekTo, song],
   );
 
+  const gradeCurrentLineBeforeMovingForward = useCallback(() => {
+    if (!song || mode !== "dictation") return;
+    const line = song.lyrics[activeIndex];
+    if (!line || isSectionLine(line.english)) return;
+    const words = line.english.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return;
+
+    updateSong(song.id, (value) => {
+      const before = value.progress.lineProgress[line.id] ?? EMPTY_PROGRESS;
+      const drafts = before.wordDrafts ?? [];
+      const previousResults = before.wordResults ?? [];
+      const wordResults = words.map((word, index) => {
+        if (previousResults[index] === "correct") return "correct" as const;
+        const draft = drafts[index]?.trim() ?? "";
+        return draft && normalizeWordAnswer(draft) === normalizeWordAnswer(word)
+          ? "correct" as const
+          : "wrong" as const;
+      });
+      const changed = wordResults.some((result, index) => result !== previousResults[index]);
+      if (!changed) return value;
+
+      const correctCount = wordResults.filter((result) => result === "correct").length;
+      const score = Math.round((correctCount / words.length) * 100);
+      const completed = correctCount === words.length;
+      return {
+        ...value,
+        progress: {
+          ...value.progress,
+          lineProgress: {
+            ...value.progress.lineProgress,
+            [line.id]: {
+              ...before,
+              wordResults,
+              attempts: before.attempts + 1,
+              bestScore: Math.max(before.bestScore, score),
+              completed: before.completed || completed,
+            },
+          },
+        },
+      };
+    });
+  }, [activeIndex, mode, song, updateSong]);
+
   const navigateToLine = useCallback((index: number) => {
     if (!song) return;
     const safeIndex = Math.max(0, Math.min(index, song.lyrics.length - 1));
+    if (mode === "dictation" && safeIndex > activeIndex) gradeCurrentLineBeforeMovingForward();
     if (mode === "dictation") setDictationLineIndex(safeIndex);
     seekLine(safeIndex);
-  }, [mode, seekLine, song]);
+  }, [activeIndex, gradeCurrentLineBeforeMovingForward, mode, seekLine, song]);
 
   const navigateStudyLine = useCallback((direction: -1 | 1) => {
     if (!song) return;
@@ -881,7 +925,7 @@ export function PopoverApp() {
                     {mode === "listen" ? <span className="line-english">{line.english}</span> : null}
                     <span className="line-korean">{line.korean || "번역 대기 중"}</span>
                   </span>
-                  <span className="line-status">{progress?.completed ? <Check size={15} /> : mode === "dictation" && progress?.revealed ? "공개" : mode === "dictation" && progress?.wordResults?.includes("skipped") ? "보류" : formatTime(line.start)}</span>
+                  <span className="line-status">{progress?.completed ? <Check size={15} /> : mode === "dictation" && progress?.revealed ? "공개" : mode === "dictation" && progress?.wordResults?.includes("wrong") ? "오답" : mode === "dictation" && progress?.wordResults?.includes("skipped") ? "보류" : formatTime(line.start)}</span>
                 </button>
               );
             })}
