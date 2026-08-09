@@ -45,6 +45,7 @@ type ImportedTranslation = { korean: string; note?: string };
 const EMPTY_PROGRESS: LineProgress = { draft: "", wordDrafts: [], wordResults: [], revealed: false, attempts: 0, bestScore: 0, completed: false };
 const isSectionLine = (english: string) => /^\[[^\]]+\]$/.test(english.trim());
 const normalizeWordAnswer = (value: string) => normalizeAnswer(value).replace(/[\s']/g, "");
+const normalizedLineKey = (value: string) => value.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
 
 async function requestLyricMergeSuggestions(target: Pick<Song, "title" | "artist" | "lyrics">) {
   let lastError = "가사 구조 분석에 실패했습니다.";
@@ -311,6 +312,11 @@ export function PopoverApp() {
         start: roundTime(line.start + shiftSeconds),
         end: roundTime(line.end + shiftSeconds),
       })),
+      originalLyrics: value.originalLyrics?.map((line) => ({
+        ...line,
+        start: roundTime(line.start + shiftSeconds),
+        end: roundTime(line.end + shiftSeconds),
+      })),
     }));
     const shiftLabel = `${shiftSeconds >= 0 ? "+" : ""}${shiftSeconds.toFixed(1)}초`;
     showToast(`첫 가사를 ${formatTime(exactPlayerTime)}로 지정하고 모든 가사를 ${shiftLabel} 이동했습니다.`, "success");
@@ -461,41 +467,70 @@ export function PopoverApp() {
   const mergeCurrentSongLyrics = async () => {
     if (!song || mergingLyrics) return;
     setMergingLyrics(true);
-    showToast("DeepSeek가 문맥상 불필요한 가사 경계를 찾고 있습니다.");
+    showToast("원본 가사를 기준으로 문장 경계를 다시 분석하고 있습니다.");
     try {
-      const plan = await requestLyricMergeSuggestions(song);
-      const { lyrics, mergedGroups } = mergeLyricLines(song.lyrics, plan.suggestions);
-      if (!mergedGroups.length) {
-        showToast("합칠 필요가 확실한 가사 경계를 찾지 못했습니다.", "success");
+      let sourceLyrics = song.originalLyrics?.length ? song.originalLyrics.map((line) => ({ ...line })) : song.lyrics.map((line) => ({ ...line }));
+      if (!song.originalLyrics?.length && song.genieId) {
+        const response = await fetch("/api/genie/lyrics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ songId: song.genieId }),
+        });
+        const data = await response.json() as { lrc?: string; error?: string };
+        if (!response.ok || !data.lrc) throw new Error(data.error ?? "Genie 원본 가사를 다시 불러오지 못했습니다.");
+        const restored = parseLrc(data.lrc, song.duration);
+        if (!restored.length) throw new Error("Genie 원본 가사가 비어 있습니다.");
+        const sameStructure = restored.length === song.lyrics.length && restored.every((line, index) => line.english === song.lyrics[index]?.english);
+        if (!sameStructure) {
+          const timingShift = (song.lyrics[0]?.start ?? restored[0].start) - restored[0].start;
+          sourceLyrics = restored.map((line) => ({ ...line, start: line.start + timingShift, end: line.end + timingShift }));
+        }
+      }
+
+      const currentByEnglish = new Map(song.lyrics.map((line) => [normalizedLineKey(line.english), line]));
+      sourceLyrics = sourceLyrics.map((line) => {
+        const current = currentByEnglish.get(normalizedLineKey(line.english));
+        return current ? { ...line, korean: current.korean, note: current.note } : line;
+      });
+
+      const plan = await requestLyricMergeSuggestions({ ...song, lyrics: sourceLyrics });
+      const { lyrics, mergedGroups } = mergeLyricLines(sourceLyrics, plan.suggestions);
+      const structureChanged = lyrics.length !== song.lyrics.length || lyrics.some((line, index) => line.english !== song.lyrics[index]?.english);
+      if (!structureChanged) {
+        showToast("현재 가사가 이미 새 문장 기준과 일치합니다.", "success");
         return;
       }
 
       const preview = mergedGroups.slice(0, 5).map((group) =>
-        group.sourceIndexes.map((index) => song.lyrics[index].english).join(" / "),
+        group.sourceIndexes.map((index) => sourceLyrics[index].english).join(" / "),
       ).join("\n");
-      const removedCount = song.lyrics.length - lyrics.length;
       const more = mergedGroups.length > 5 ? `\n외 ${mergedGroups.length - 5}개 묶음` : "";
-      if (!window.confirm(`${removedCount}개의 불필요한 줄 경계를 합칠까요?\n\n${preview}${more}\n\n병합되는 줄의 기존 받아쓰기 기록만 초기화됩니다.`)) return;
+      const previewBlock = preview ? `\n\n${preview}${more}` : "";
+      if (!window.confirm(`원본 ${sourceLyrics.length}줄을 ${lyrics.length}개 학습 문장으로 다시 구성할까요?\n현재는 ${song.lyrics.length}개 문장입니다.${previewBlock}\n\n구조가 달라지는 문장의 번역과 받아쓰기 기록은 초기화될 수 있습니다.`)) return;
 
-      const affectedIds = new Set(mergedGroups.flatMap((group) => group.sourceIds));
       const currentLineId = song.lyrics[activeIndex]?.id;
-      const currentGroup = mergedGroups.find((group) => currentLineId && group.sourceIds.includes(currentLineId));
-      const nextActiveId = currentGroup?.sourceIds[0] ?? currentLineId;
-      const nextActiveIndex = Math.max(0, lyrics.findIndex((line) => line.id === nextActiveId));
+      const nextActiveIndex = Math.max(0, lyrics.findIndex((line) => line.id === currentLineId));
+      const currentLineById = new Map(song.lyrics.map((line) => [line.id, line]));
+      const nextLineById = new Map(lyrics.map((line) => [line.id, line]));
       updateSong(song.id, (value) => ({
         ...value,
         lyrics,
+        originalLyrics: sourceLyrics,
         progress: {
           ...value.progress,
           activeLine: nextActiveIndex,
           lineProgress: Object.fromEntries(
-            Object.entries(value.progress.lineProgress).filter(([lineId]) => !affectedIds.has(lineId)),
+            Object.entries(value.progress.lineProgress).filter(([lineId]) => {
+              const before = currentLineById.get(lineId);
+              const after = nextLineById.get(lineId);
+              return Boolean(before && after && before.english === after.english);
+            }),
           ),
           lastStudiedAt: Date.now(),
         },
       }));
       if (mode === "dictation") setDictationLineIndex(nextActiveIndex);
-      showToast(`${removedCount}개 줄 경계를 합쳤습니다.${plan.fallback ? " · DeepSeek 지연으로 안전 규칙을 사용했습니다." : ""}`, "success");
+      showToast(`${sourceLyrics.length}개 원본 줄을 ${lyrics.length}개 학습 문장으로 정리했습니다.${plan.fallback ? " · DeepSeek 지연으로 안전 규칙을 함께 사용했습니다." : ""}`, "success");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "가사 구조 분석에 실패했습니다.", "error");
     } finally {
@@ -1110,21 +1145,25 @@ function AddSongDialog({ onClose, onAdd, songCount, maxSongs, onManage }: {
     setError("");
     if (full) { setError("보관함 한도에 도달했습니다. 기존 곡을 삭제하거나 한도를 늘려주세요."); return; }
     if (!video) { setError("먼저 YouTube URL 또는 영상 ID를 확인해주세요."); return; }
-    let lyrics = parseLrc(lrc);
-    if (!lyrics.length) { setError("LRC 형식 가사 또는 줄바꿈된 가사를 입력해주세요."); return; }
+    const sourceLyrics = parseLrc(lrc);
+    if (!sourceLyrics.length) { setError("LRC 형식 가사 또는 줄바꿈된 가사를 입력해주세요."); return; }
+    let lyrics = sourceLyrics;
+    let originalLyrics: Song["originalLyrics"];
     const resolvedTitle = title.trim() || video.title;
     const resolvedArtist = artist.trim() || video.artist;
     setBusy("merge");
     try {
       if (mergeBeforeAdd && lyrics.length > 1) {
         const plan = await requestLyricMergeSuggestions({ title: resolvedTitle, artist: resolvedArtist, lyrics });
-        lyrics = mergeLyricLines(lyrics, plan.suggestions).lyrics;
+        const merged = mergeLyricLines(lyrics, plan.suggestions);
+        lyrics = merged.lyrics;
+        if (merged.mergedGroups.length) originalLyrics = sourceLyrics.map((line) => ({ ...line }));
       }
       const now = Date.now();
       onAdd({
         id: crypto.randomUUID(), title: resolvedTitle, artist: resolvedArtist,
         videoId: video.videoId, thumbnail: video.thumbnail, duration: lyrics.at(-1)?.end ?? 240,
-        source: genieId ? "genie" : "manual", genieId: genieId || undefined, lyrics, syncOffsetMs: 0, createdAt: now,
+        source: genieId ? "genie" : "manual", genieId: genieId || undefined, lyrics, originalLyrics, syncOffsetMs: 0, createdAt: now,
         progress: { position: 0, activeLine: 0, lineProgress: {}, lastStudiedAt: now },
       }, translateAfter);
     } catch (caught) {

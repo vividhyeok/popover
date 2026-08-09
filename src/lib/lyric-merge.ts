@@ -12,10 +12,6 @@ export type MergedLyricGroup = {
 };
 
 const isSectionLine = (english: string) => /^\[[^\]]+\]$/.test(english.trim());
-const wordCount = (value: string) => value.trim().split(/\s+/).filter(Boolean).length;
-const MAX_MERGED_LINES = 4;
-const MAX_MERGED_WORDS = 36;
-const MAX_MERGED_DURATION = 24;
 
 export function mergeLyricLines(lines: LyricLine[], suggestions: LyricMergeSuggestion[]) {
   const requestedBoundaries = new Set(
@@ -33,14 +29,9 @@ export function mergeLyricLines(lines: LyricLine[], suggestions: LyricMergeSugge
 
     while (requestedBoundaries.has(cursor + 1) && cursor + 1 < lines.length) {
       const next = lines[cursor + 1];
-      const combinedEnglish = [...group, next].map((line) => line.english.trim()).join(" ").replace(/\s+/g, " ");
-      const combinedDuration = next.end - group[0].start;
       if (
         isSectionLine(group.at(-1)?.english ?? "")
         || isSectionLine(next.english)
-        || group.length >= MAX_MERGED_LINES
-        || wordCount(combinedEnglish) > MAX_MERGED_WORDS
-        || combinedDuration > MAX_MERGED_DURATION
       ) break;
       group.push(next);
       cursor += 1;

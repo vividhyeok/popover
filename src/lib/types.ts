@@ -36,6 +36,7 @@ export type Song = {
   source: "demo" | "genie" | "manual";
   genieId?: string;
   lyrics: LyricLine[];
+  originalLyrics?: LyricLine[];
   syncOffsetMs: number;
   createdAt: number;
   progress: SongProgress;
