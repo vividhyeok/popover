@@ -43,7 +43,7 @@ npm install
 ```env
 DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_MODEL=deepseek-v4-pro
-DEEPSEEK_MERGE_MODEL=deepseek-v4-flash
+DEEPSEEK_MERGE_MODEL=deepseek-v4-pro
 
 # 선택 사항: 앱 안에서 YouTube 검색 결과를 표시할 때만 필요
 YOUTUBE_API_KEY=your_youtube_data_api_key
