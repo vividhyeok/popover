@@ -45,6 +45,7 @@ export type AppSettings = {
   maxSongs: number;
   autoAdvance: boolean;
   showKoreanInDictation: boolean;
+  dictationAutoRepeat: boolean;
 };
 
 export type PersistedState = {

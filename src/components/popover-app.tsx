@@ -31,6 +31,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatTime, normalizeAnswer, parseLrc } from "@/lib/lrc";
+import { mergeLyricLines, type LyricMergeSuggestion } from "@/lib/lyric-merge";
 import { defaultState, loadState, saveState } from "@/lib/storage";
 import type { LineProgress, PersistedState, Song, StudyMode } from "@/lib/types";
 import { YouTubePlayer, type YouTubePlayerHandle } from "./youtube-player";
@@ -44,6 +45,26 @@ type ImportedTranslation = { korean: string; note?: string };
 const EMPTY_PROGRESS: LineProgress = { draft: "", wordDrafts: [], wordResults: [], revealed: false, attempts: 0, bestScore: 0, completed: false };
 const isSectionLine = (english: string) => /^\[[^\]]+\]$/.test(english.trim());
 const normalizeWordAnswer = (value: string) => normalizeAnswer(value).replace(/[\s']/g, "");
+
+async function requestLyricMergeSuggestions(target: Pick<Song, "title" | "artist" | "lyrics">) {
+  let lastError = "가사 구조 분석에 실패했습니다.";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch("/api/lyrics/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: target.title,
+        artist: target.artist,
+        lyrics: target.lyrics.map(({ start, end, english }) => ({ start, end, english })),
+      }),
+    });
+    const data = await response.json() as { merges?: LyricMergeSuggestion[]; fallback?: boolean; error?: string; code?: string };
+    if (response.ok) return { suggestions: data.merges ?? [], fallback: Boolean(data.fallback) };
+    lastError = data.error ?? lastError;
+    if (data.code !== "UPSTREAM_TIMEOUT" || attempt === 1) break;
+  }
+  throw new Error(lastError);
+}
 
 export function PopoverApp() {
   const [app, setApp] = useState<PersistedState>(defaultState);
@@ -61,6 +82,7 @@ export function PopoverApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [translationImportOpen, setTranslationImportOpen] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const [mergingLyrics, setMergingLyrics] = useState(false);
   const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
   const wordInputRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -227,7 +249,7 @@ export function PopoverApp() {
     if (!playing || !activeLine || !song) return;
     const isDictationLine = mode === "dictation" && !isSectionLine(activeLine.english);
     const lineCompleted = Boolean(song.progress.lineProgress[activeLine.id]?.completed);
-    const shouldRepeat = isDictationLine ? !lineCompleted : mode === "listen" && loopLine;
+    const shouldRepeat = isDictationLine ? app.settings.dictationAutoRepeat && !lineCompleted : mode === "listen" && loopLine;
     const shouldHold = isDictationLine && lineCompleted;
     if (effectiveTime < activeLine.end - 0.12) return;
     if (shouldRepeat) {
@@ -237,7 +259,7 @@ export function PopoverApp() {
       else setPlaying(false);
       seekTo(activeLine.end - song.syncOffsetMs / 1000 - 0.08);
     }
-  }, [activeIndex, activeLine, effectiveTime, loopLine, mode, playing, seekLine, seekTo, song]);
+  }, [activeIndex, activeLine, app.settings.dictationAutoRepeat, effectiveTime, loopLine, mode, playing, seekLine, seekTo, song]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -436,6 +458,51 @@ export function PopoverApp() {
     });
   };
 
+  const mergeCurrentSongLyrics = async () => {
+    if (!song || mergingLyrics) return;
+    setMergingLyrics(true);
+    showToast("DeepSeek가 문맥상 불필요한 가사 경계를 찾고 있습니다.");
+    try {
+      const plan = await requestLyricMergeSuggestions(song);
+      const { lyrics, mergedGroups } = mergeLyricLines(song.lyrics, plan.suggestions);
+      if (!mergedGroups.length) {
+        showToast("합칠 필요가 확실한 가사 경계를 찾지 못했습니다.", "success");
+        return;
+      }
+
+      const preview = mergedGroups.slice(0, 5).map((group) =>
+        group.sourceIndexes.map((index) => song.lyrics[index].english).join(" / "),
+      ).join("\n");
+      const removedCount = song.lyrics.length - lyrics.length;
+      const more = mergedGroups.length > 5 ? `\n외 ${mergedGroups.length - 5}개 묶음` : "";
+      if (!window.confirm(`${removedCount}개의 불필요한 줄 경계를 합칠까요?\n\n${preview}${more}\n\n병합되는 줄의 기존 받아쓰기 기록만 초기화됩니다.`)) return;
+
+      const affectedIds = new Set(mergedGroups.flatMap((group) => group.sourceIds));
+      const currentLineId = song.lyrics[activeIndex]?.id;
+      const currentGroup = mergedGroups.find((group) => currentLineId && group.sourceIds.includes(currentLineId));
+      const nextActiveId = currentGroup?.sourceIds[0] ?? currentLineId;
+      const nextActiveIndex = Math.max(0, lyrics.findIndex((line) => line.id === nextActiveId));
+      updateSong(song.id, (value) => ({
+        ...value,
+        lyrics,
+        progress: {
+          ...value.progress,
+          activeLine: nextActiveIndex,
+          lineProgress: Object.fromEntries(
+            Object.entries(value.progress.lineProgress).filter(([lineId]) => !affectedIds.has(lineId)),
+          ),
+          lastStudiedAt: Date.now(),
+        },
+      }));
+      if (mode === "dictation") setDictationLineIndex(nextActiveIndex);
+      showToast(`${removedCount}개 줄 경계를 합쳤습니다.${plan.fallback ? " · DeepSeek 지연으로 안전 규칙을 사용했습니다." : ""}`, "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "가사 구조 분석에 실패했습니다.", "error");
+    } finally {
+      setMergingLyrics(false);
+    }
+  };
+
   const removeSong = (id: string) => {
     const target = app.songs.find((item) => item.id === id);
     if (!target || !window.confirm(`“${target.title}”을 보관함에서 삭제할까요? 학습 기록도 함께 삭제됩니다.`)) return;
@@ -608,7 +675,10 @@ export function PopoverApp() {
             <>
               <div className="player-heading">
                 <div><p className="eyebrow">{mode === "dictation" ? "DICTATION PRACTICE" : "LISTENING STUDY"}</p><h1>{song.title}</h1><p>{song.artist}</p></div>
-                {song.videoId ? <a className="youtube-link" href={`https://youtu.be/${song.videoId}`} target="_blank" rel="noreferrer"><ExternalLink size={14} /> YouTube</a> : <span className="demo-chip">DEMO</span>}
+                <div className="player-heading-actions">
+                  <button className="lyric-merge-button" onClick={mergeCurrentSongLyrics} disabled={mergingLyrics || song.lyrics.length < 2}>{mergingLyrics ? <Loader2 className="spin" size={14} /> : <Link2 size={14} />}{mergingLyrics ? "가사 분석 중" : "DeepSeek 줄바꿈 정리"}</button>
+                  {song.videoId ? <a className="youtube-link" href={`https://youtu.be/${song.videoId}`} target="_blank" rel="noreferrer"><ExternalLink size={14} /> YouTube</a> : <span className="demo-chip">DEMO</span>}
+                </div>
               </div>
 
               <div className={`video-stage ${mode === "dictation" ? "dictation-video-stage" : ""}`}>
@@ -743,7 +813,7 @@ export function PopoverApp() {
                       <button aria-label="현재 문장 처음부터 듣기" onClick={() => seekLine(activeIndex)}><RotateCcw size={17} /></button>
                       <button className="dictation-play-button" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}</button>
                       <label><span>속도</span><select value={playbackRate} onChange={(event) => setRate(Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1.0×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option></select></label>
-                      <em>미완료 구간 자동 반복</em>
+                      <button className={app.settings.dictationAutoRepeat ? "dictation-repeat-toggle active" : "dictation-repeat-toggle"} onClick={() => setApp((state) => ({ ...state, settings: { ...state.settings, dictationAutoRepeat: !state.settings.dictationAutoRepeat } }))}><RotateCcw size={14} /> 자동 반복 {app.settings.dictationAutoRepeat ? "켬" : "끔"}</button>
                     </div>
                     <button className="dictation-nav-button" onClick={() => navigateStudyLine(1)}><ChevronDown size={20} /><span><small>↓</small> 다음 가사</span></button>
                   </div>
@@ -948,6 +1018,7 @@ function AddSongDialog({ onClose, onAdd, songCount, maxSongs, onManage }: {
   const [genieResults, setGenieResults] = useState<GenieResult[]>([]);
   const [genieId, setGenieId] = useState("");
   const [lrc, setLrc] = useState("");
+  const [mergeBeforeAdd, setMergeBeforeAdd] = useState(true);
   const [translateAfter, setTranslateAfter] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -1002,19 +1073,32 @@ function AddSongDialog({ onClose, onAdd, songCount, maxSongs, onManage }: {
     finally { setBusy(""); }
   };
 
-  const submit = () => {
+  const submit = async () => {
     setError("");
     if (full) { setError("보관함 한도에 도달했습니다. 기존 곡을 삭제하거나 한도를 늘려주세요."); return; }
     if (!video) { setError("먼저 YouTube URL 또는 영상 ID를 확인해주세요."); return; }
-    const lyrics = parseLrc(lrc);
+    let lyrics = parseLrc(lrc);
     if (!lyrics.length) { setError("LRC 형식 가사 또는 줄바꿈된 가사를 입력해주세요."); return; }
-    const now = Date.now();
-    onAdd({
-      id: crypto.randomUUID(), title: title.trim() || video.title, artist: artist.trim() || video.artist,
-      videoId: video.videoId, thumbnail: video.thumbnail, duration: lyrics.at(-1)?.end ?? 240,
-      source: genieId ? "genie" : "manual", genieId: genieId || undefined, lyrics, syncOffsetMs: 0, createdAt: now,
-      progress: { position: 0, activeLine: 0, lineProgress: {}, lastStudiedAt: now },
-    }, translateAfter);
+    const resolvedTitle = title.trim() || video.title;
+    const resolvedArtist = artist.trim() || video.artist;
+    setBusy("merge");
+    try {
+      if (mergeBeforeAdd && lyrics.length > 1) {
+        const plan = await requestLyricMergeSuggestions({ title: resolvedTitle, artist: resolvedArtist, lyrics });
+        lyrics = mergeLyricLines(lyrics, plan.suggestions).lyrics;
+      }
+      const now = Date.now();
+      onAdd({
+        id: crypto.randomUUID(), title: resolvedTitle, artist: resolvedArtist,
+        videoId: video.videoId, thumbnail: video.thumbnail, duration: lyrics.at(-1)?.end ?? 240,
+        source: genieId ? "genie" : "manual", genieId: genieId || undefined, lyrics, syncOffsetMs: 0, createdAt: now,
+        progress: { position: 0, activeLine: 0, lineProgress: {}, lastStudiedAt: now },
+      }, translateAfter);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "가사 구조 분석에 실패했습니다. 자동 병합을 끄고 등록할 수도 있습니다.");
+    } finally {
+      setBusy("");
+    }
   };
 
   return (
@@ -1025,10 +1109,10 @@ function AddSongDialog({ onClose, onAdd, songCount, maxSongs, onManage }: {
         <div className="add-grid">
           <section className="form-section"><div className="section-number">1</div><div className="section-content"><h3>YouTube 영상 연결</h3><p>URL 또는 11자리 영상 ID는 API 키 없이 바로 사용할 수 있습니다.</p><div className="inline-form"><div className="field with-icon"><Link2 size={15} /><input value={videoInput} onChange={(event) => setVideoInput(event.target.value)} placeholder="YouTube에서 복사한 URL 또는 영상 ID" /></div><button onClick={resolveVideo} disabled={busy === "video"}>{busy === "video" ? <Loader2 className="spin" size={16} /> : "확인"}</button></div><div className="or-divider"><span>영상을 아직 찾지 않았다면</span></div><div className="inline-form youtube-search-form"><div className="field with-icon"><Search size={15} /><input value={videoQuery} onChange={(event) => setVideoQuery(event.target.value)} placeholder="아티스트와 곡명" /></div><a className="external-search" href={videoQuery.trim() ? `https://www.youtube.com/results?search_query=${encodeURIComponent(videoQuery.trim())}` : "https://www.youtube.com"} target="_blank" rel="noreferrer"><ExternalLink size={14} /> YouTube에서 검색</a><button className="secondary" onClick={searchVideo} disabled={busy === "youtube"} title="YOUTUBE_API_KEY가 있을 때만 사용 가능">{busy === "youtube" ? <Loader2 className="spin" size={16} /> : "앱 안 검색"}</button></div><p className="search-help">검색 결과에서 영상을 연 뒤 주소를 복사해 위 URL 칸에 붙여 넣으세요. 앱 안 검색만 선택적 API 키가 필요합니다.</p>{videoResults.length ? <div className="search-results">{videoResults.map((result) => <button key={result.videoId} onClick={() => selectVideo(result)}><span className="result-thumb" style={{ backgroundImage: `url(${result.thumbnail})` }} /><span><b>{result.title}</b><small>{result.artist}</small></span></button>)}</div> : null}{video ? <div className="selected-source"><span className="result-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }} /><div><span>연결된 영상</span><b>{video.title}</b><small>{video.artist}</small></div><Check size={18} /></div> : null}</div></section>
           <section className="form-section"><div className="section-number">2</div><div className="section-content"><h3>동기화 가사</h3><p>Genie에서 찾거나 LRC를 직접 붙여 넣으세요.</p><div className="inline-form"><div className="field with-icon"><Search size={15} /><input value={genieQuery} onChange={(event) => setGenieQuery(event.target.value)} placeholder="Genie 곡 검색" /></div><button className="secondary" onClick={searchGenie} disabled={busy === "genie"}>{busy === "genie" ? <Loader2 className="spin" size={16} /> : "찾기"}</button></div>{genieResults.length ? <div className="search-results genie-results">{genieResults.map((result) => <button key={result.id} onClick={() => fetchGenieLyrics(result)}><span className="result-music"><Languages size={16} /></span><span><b>{result.title}</b><small>{result.artist}</small></span><em>{busy === `genie-${result.id}` ? "불러오는 중" : "가사 사용"}</em></button>)}</div> : null}<textarea className="lrc-input" value={lrc} onChange={(event) => setLrc(event.target.value)} placeholder={'[00:12.40] First line of the song\n[00:16.10] Second line of the song\n\n타임스탬프가 없으면 곡 길이에 맞춰 임시 배분됩니다.'} /><div className="line-count"><Clock3 size={14} /> {parseLrc(lrc).length}개 문장 감지 {genieId ? <span>· Genie #{genieId}</span> : null}</div></div></section>
-          <section className="form-section"><div className="section-number">3</div><div className="section-content meta-fields"><h3>곡 정보 및 번역</h3><div className="two-fields"><label>곡명<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Song title" /></label><label>아티스트<input value={artist} onChange={(event) => setArtist(event.target.value)} placeholder="Artist" /></label></div><label className="check-row"><input type="checkbox" checked={translateAfter} onChange={(event) => setTranslateAfter(event.target.checked)} /><span><b>등록 후 DeepSeek 자동 초안 만들기</b><small>기본값은 꺼짐입니다. 고품질 번역은 등록 후 ‘AI 번역 가져오기’를 사용하세요.</small></span></label></div></section>
+          <section className="form-section"><div className="section-number">3</div><div className="section-content meta-fields"><h3>곡 정보 및 AI 정리</h3><div className="two-fields"><label>곡명<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Song title" /></label><label>아티스트<input value={artist} onChange={(event) => setArtist(event.target.value)} placeholder="Artist" /></label></div><label className="check-row"><input type="checkbox" checked={mergeBeforeAdd} onChange={(event) => setMergeBeforeAdd(event.target.checked)} /><span><b>등록 전에 DeepSeek로 불필요한 가사 끊김 합치기</b><small>기본값은 켜짐입니다. “Today I don’t feel / like doing anything”처럼 한 문장이 과도하게 잘린 경우만 보수적으로 합칩니다.</small></span></label><label className="check-row"><input type="checkbox" checked={translateAfter} onChange={(event) => setTranslateAfter(event.target.checked)} /><span><b>등록 후 DeepSeek 자동 번역 초안 만들기</b><small>기본값은 꺼짐입니다. 고품질 번역은 등록 후 ‘AI 번역 가져오기’를 사용하세요.</small></span></label></div></section>
         </div>
         {error ? <div className="form-error"><AlertCircle size={16} /> {error}</div> : null}
-        <div className="dialog-footer"><p>가사와 학습 기록만 Local Storage에 저장됩니다.</p><div><button className="cancel-button" onClick={onClose}>취소</button><button className="primary-button" onClick={submit} disabled={full || !video || !lrc.trim()}><Plus size={16} /> 학습 곡 등록</button></div></div>
+        <div className="dialog-footer"><p>가사와 학습 기록만 Local Storage에 저장됩니다.</p><div><button className="cancel-button" onClick={onClose}>취소</button><button className="primary-button" onClick={submit} disabled={full || !video || !lrc.trim() || Boolean(busy)}>{busy === "merge" ? <Loader2 className="spin" size={16} /> : <Plus size={16} />} {busy === "merge" ? "가사 구조 분석 중" : "학습 곡 등록"}</button></div></div>
       </div>
     </div>
   );
@@ -1038,7 +1122,7 @@ function SettingsDialog({ app, onChange, onClose }: { app: PersistedState; onCha
   const updateSettings = (partial: Partial<PersistedState["settings"]>) => onChange({ ...app, settings: { ...app.settings, ...partial } });
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-      <div className="dialog-card settings-dialog" role="dialog" aria-modal="true"><div className="dialog-header"><div><p className="eyebrow">PREFERENCES</p><h2>학습 설정</h2></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div><div className="settings-body"><label className="setting-row"><span><b>보관함 저장 한도</b><small>Local Storage를 안정적으로 쓰기 위해 3~12곡을 권장합니다.</small></span><select value={app.settings.maxSongs} onChange={(event) => updateSettings({ maxSongs: Number(event.target.value) })}>{[3, 5, 8, 10, 12].map((value) => <option key={value} value={value}>{value}곡</option>)}</select></label>{app.songs.length > app.settings.maxSongs ? <div className="settings-warning"><AlertCircle size={15} /> 현재 곡 수가 한도보다 많습니다. 삭제 전까지 새 곡을 추가할 수 없습니다.</div> : null}<div className="storage-note"><Library size={18} /><div><b>{app.songs.length}곡 저장 중</b><p>영상과 음원은 YouTube iframe에서 재생되며 브라우저에는 저장되지 않습니다.</p></div></div></div><div className="dialog-footer"><p>.env.local의 키 값은 브라우저로 노출되지 않습니다.</p><button className="primary-button" onClick={onClose}>완료</button></div></div>
+      <div className="dialog-card settings-dialog" role="dialog" aria-modal="true"><div className="dialog-header"><div><p className="eyebrow">PREFERENCES</p><h2>학습 설정</h2></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div><div className="settings-body"><label className="setting-row"><span><b>보관함 저장 한도</b><small>Local Storage를 안정적으로 쓰기 위해 3~12곡을 권장합니다.</small></span><select value={app.settings.maxSongs} onChange={(event) => updateSettings({ maxSongs: Number(event.target.value) })}>{[3, 5, 8, 10, 12].map((value) => <option key={value} value={value}>{value}곡</option>)}</select></label><label className="setting-row toggle-setting"><span><b>받아쓰기 자동 반복</b><small>기본값은 켜짐입니다. 싱크를 맞추거나 영상을 자유롭게 탐색할 때 끌 수 있습니다.</small></span><input type="checkbox" checked={app.settings.dictationAutoRepeat} onChange={(event) => updateSettings({ dictationAutoRepeat: event.target.checked })} /></label>{app.songs.length > app.settings.maxSongs ? <div className="settings-warning"><AlertCircle size={15} /> 현재 곡 수가 한도보다 많습니다. 삭제 전까지 새 곡을 추가할 수 없습니다.</div> : null}<div className="storage-note"><Library size={18} /><div><b>{app.songs.length}곡 저장 중</b><p>영상과 음원은 YouTube iframe에서 재생되며 브라우저에는 저장되지 않습니다.</p></div></div></div><div className="dialog-footer"><p>.env.local의 키 값은 브라우저로 노출되지 않습니다.</p><button className="primary-button" onClick={onClose}>완료</button></div></div>
     </div>
   );
 }

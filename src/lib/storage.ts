@@ -11,6 +11,7 @@ export const defaultState: PersistedState = {
     maxSongs: 8,
     autoAdvance: true,
     showKoreanInDictation: true,
+    dictationAutoRepeat: true,
   },
 };
 
@@ -34,4 +35,3 @@ export function loadState(): PersistedState {
 export function saveState(state: PersistedState) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
-
