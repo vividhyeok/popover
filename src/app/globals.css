@@ -45,7 +45,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .ghost-button, .cancel-button { background: transparent; border-color: var(--line); }.ghost-button:hover, .cancel-button:hover { background: var(--paper-2); }
 
 .workspace { height: calc(100vh - 70px); display: grid; grid-template-columns: 260px minmax(510px, .9fr) minmax(470px, 1.05fr); }
-.workspace.dictation-workspace { grid-template-columns: 260px minmax(680px, 1.35fr) minmax(360px, .72fr); }
+.workspace.dictation-workspace { grid-template-columns: 260px minmax(760px, 1fr) clamp(360px, 23vw, 430px); }
 .library-panel, .player-column, .lyrics-panel { min-width: 0; }
 .library-panel { border-right: 1px solid var(--line); padding: 22px 15px 16px; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
 .panel-title-row, .lyrics-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
@@ -115,27 +115,28 @@ h1, h2, h3, p { margin-top: 0; }
 .lyric-row { width: 100%; border: 0; border-left: 3px solid transparent; background: transparent; display: grid; grid-template-columns: 30px 1fr 44px; gap: 9px; align-items: flex-start; text-align: left; padding: 12px 9px 12px 8px; border-radius: 7px; cursor: pointer; color: inherit; }.lyric-row:hover { background: var(--paper); }.lyric-row.active { background: #eeeadd; border-left-color: var(--accent-dark); }.line-index { font-size: 8px; color: #a49ca2; padding-top: 4px; font-variant-numeric: tabular-nums; }.line-body { min-width: 0; }.line-english, .line-korean { display: block; }.line-english { font-family: Georgia, serif; font-weight: 700; font-size: 15px; line-height: 1.35; }.line-korean { font-size: 10px; color: var(--muted); line-height: 1.45; margin-top: 5px; }.dictation-row { padding-top: 14px; padding-bottom: 14px; }.dictation-row .line-korean { margin-top: 0; color: #554e52; font-size: 12px; line-height: 1.55; }.dictation-row.active .line-korean { color: var(--ink); font-weight: 700; }.line-status { justify-self: end; color: var(--muted); font-size: 8px; padding-top: 4px; font-variant-numeric: tabular-nums; }.lyric-row.active .line-status { color: var(--accent-dark); }
 .shortcut-bar { min-height: 47px; border-top: 1px solid var(--line); background: var(--paper); display: flex; align-items: center; gap: 15px; padding: 0 18px; font-size: 9px; color: var(--muted); }.shortcut-bar span { display: flex; gap: 4px; align-items: center; }.shortcut-bar kbd { background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; min-width: 20px; padding: 2px 4px; text-align: center; font: 8px monospace; }.shortcut-bar em { margin-left: auto; color: var(--accent-dark); font-style: normal; font-weight: 700; }
 
-.dictation-column { padding: 16px 22px 18px; background: #efede6; }
-.dictation-column .player-heading { min-height: 50px; }.dictation-column .player-heading h1 { font-size: clamp(19px, 1.7vw, 25px); }
-.dictation-video-stage { height: min(31vh, 300px); aspect-ratio: auto; margin-top: 8px; box-shadow: 0 10px 28px rgba(32,23,31,.13); }
-.dictation-practice-card { margin-top: 11px; border: 1px solid #cec8bc; border-top: 4px solid var(--accent-dark); border-radius: 11px; background: var(--surface); padding: 16px 18px 14px; box-shadow: 0 10px 28px rgba(32,23,31,.07); }
+.dictation-column { padding: 16px 20px 18px; background: #efede6; display: grid; grid-template-columns: minmax(360px, .72fr) minmax(560px, 1.28fr); grid-template-rows: auto auto auto 1fr; column-gap: 14px; align-content: start; }
+.dictation-column > .no-song { grid-column: 1 / -1; grid-row: 1 / -1; }
+.dictation-column .player-heading { grid-column: 1 / -1; min-height: 50px; }.dictation-column .player-heading h1 { font-size: clamp(19px, 1.7vw, 25px); }
+.dictation-video-stage { grid-column: 1; grid-row: 2; width: 100%; height: auto; aspect-ratio: 16/9; margin-top: 8px; align-self: start; box-shadow: 0 10px 28px rgba(32,23,31,.13); }
+.dictation-practice-card { grid-column: 2; grid-row: 2 / span 2; min-height: 382px; margin-top: 8px; border: 1px solid #c8c1b5; border-top: 4px solid var(--accent-dark); border-radius: 11px; background: var(--surface); padding: 18px 20px 16px; box-shadow: 0 12px 30px rgba(32,23,31,.08); }
 .dictation-line-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-bottom: 11px; border-bottom: 1px solid var(--line); }
 .dictation-line-head > div:first-child { display: flex; align-items: baseline; gap: 8px; }.dictation-line-head span { color: var(--muted); font-size: 9px; }.dictation-line-head b { font-size: 11px; letter-spacing: .8px; }
 .dictation-line-score { display: flex; align-items: baseline; gap: 4px; }.dictation-line-score b { color: var(--accent-dark); font-size: 20px; letter-spacing: -1px; }.dictation-line-score span { font-size: 9px; }
 .dictation-prompt { padding: 15px 0 12px; }.dictation-prompt > span { display: block; margin-bottom: 6px; color: var(--accent-dark); font-size: 8px; font-weight: 900; letter-spacing: 1.1px; }.dictation-prompt p { margin: 0; color: var(--ink); font-size: clamp(16px, 1.35vw, 20px); font-weight: 800; line-height: 1.5; }
 .typing-practice { margin-top: 0; padding-top: 11px; }.typing-practice .word-practice-head { margin-bottom: 9px; }.typing-practice .word-practice-head b { font-size: 12px; }
-.typing-practice .word-flow { min-height: 92px; padding: 13px 14px 9px; gap: 8px 10px; align-content: flex-start; background: #f5f2ea; border-color: #d1cbc0; }
+.typing-practice .word-flow { min-height: 112px; padding: 15px 16px 11px; gap: 9px 11px; align-content: flex-start; background: #f5f2ea; border-color: #d1cbc0; }
 .typing-practice .word-token { min-width: 48px; max-width: 190px; padding: 4px 5px 2px; border-radius: 6px; }
 .typing-practice .word-token:focus-within { background: white; box-shadow: 0 0 0 3px rgba(136,170,33,.18); }.typing-practice .word-token:focus-within .word-input-wrap { border-color: var(--accent-dark); }
 .typing-practice .word-token-label { height: 14px; font-size: 8px; }.typing-practice .word-input-wrap input { height: 34px; padding: 0 2px; font-size: 17px; letter-spacing: -.25px; }
 .typing-practice .word-token small { height: 13px; padding-top: 3px; font-size: 8px; }
 .typing-practice .word-practice-foot { margin-top: 9px; font-size: 9px; }
-.dictation-note-slot { height: 66px; margin-top: 12px; }.dictation-note-slot .focus-note { padding: 9px 11px; }
+.dictation-note-slot { height: 70px; margin-top: 16px; }.dictation-note-slot .focus-note { padding: 10px 12px; }
 .dictation-waiting { min-height: 92px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 10px; }
 .section-line-skip kbd { margin: 0 2px; padding: 2px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: white; color: var(--ink); font: 9px monospace; }
-.dictation-transport { margin-top: 10px; min-height: 68px; display: grid; grid-template-columns: 120px 1fr 120px; gap: 9px; align-items: stretch; }
+.dictation-transport { grid-column: 1; grid-row: 3; margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: stretch; }
 .dictation-nav-button { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }.dictation-nav-button:hover { border-color: var(--accent-dark); background: #f7fadf; }.dictation-nav-button span, .dictation-nav-button small { display: block; }.dictation-nav-button span { font-size: 10px; font-weight: 800; }.dictation-nav-button small { margin-bottom: 2px; color: var(--accent-dark); font: 8px monospace; }
-.dictation-playback { min-width: 0; border-radius: 10px; background: var(--ink); color: white; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 9px 13px; }.dictation-playback > button { width: 33px; height: 33px; border: 0; border-radius: 50%; background: rgba(255,255,255,.1); color: white; display: grid; place-items: center; cursor: pointer; }.dictation-playback > button:hover { background: rgba(255,255,255,.2); }.dictation-playback .dictation-play-button { width: 42px; height: 42px; background: var(--accent); color: var(--ink); }
+.dictation-nav-button { min-height: 52px; }.dictation-playback { grid-column: 1 / -1; min-width: 0; min-height: 60px; border-radius: 10px; background: var(--ink); color: white; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 8px 10px; }.dictation-playback > button { width: 33px; height: 33px; flex: none; border: 0; border-radius: 50%; background: rgba(255,255,255,.1); color: white; display: grid; place-items: center; cursor: pointer; }.dictation-playback > button:hover { background: rgba(255,255,255,.2); }.dictation-playback .dictation-play-button { width: 42px; height: 42px; background: var(--accent); color: var(--ink); }
 .dictation-playback label { display: flex; align-items: center; gap: 5px; color: #bbb4bb; font-size: 8px; }.dictation-playback select { border: 0; border-radius: 5px; background: #2b242b; color: white; padding: 4px; font-size: 9px; }.dictation-playback em { color: var(--accent); font-size: 8px; font-style: normal; font-weight: 800; white-space: nowrap; }
 .dictation-playback .dictation-repeat-toggle { width: auto; height: 30px; padding: 0 8px; border-radius: 6px; color: #bbb4bb; gap: 4px; font-size: 8px; font-weight: 800; white-space: nowrap; }.dictation-playback .dictation-repeat-toggle.active { background: rgba(201,255,61,.14); color: var(--accent); }
 .lyrics-toolbar-copy small { display: block; margin-top: 5px; color: var(--muted); font-size: 8px; }.dictation-workspace .lyrics-toolbar { padding-top: 17px; }
@@ -162,7 +163,15 @@ h1, h2, h3, p { margin-top: 0; }
 .spin { animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-height: 760px) {
-  .player-column { padding-top: 14px; }.player-heading { min-height: 48px; }.video-stage { max-height: 330px; margin-inline: auto; width: auto; }.focus-line-card { padding-block: 11px; }.sync-card { margin-bottom: 14px; }
+  .player-column { padding-top: 14px; }.player-heading { min-height: 48px; }.listening-column .video-stage { max-height: 330px; margin-inline: auto; width: auto; }.focus-line-card { padding-block: 11px; }.sync-card { margin-bottom: 14px; }
+}
+
+@media (max-width: 1550px) {
+  .workspace.dictation-workspace { grid-template-columns: 250px minmax(700px, 1fr) minmax(350px, 390px); }
+  .dictation-column { grid-template-columns: minmax(280px, .78fr) minmax(420px, 1.22fr); padding-inline: 16px; column-gap: 11px; }
+  .dictation-practice-card { padding-inline: 16px; }
+  .dictation-playback { gap: 6px; padding-inline: 7px; }
+  .dictation-playback .dictation-repeat-toggle { padding-inline: 6px; }
 }
 
 @media (max-width: 1050px) {

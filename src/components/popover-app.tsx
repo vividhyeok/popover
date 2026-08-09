@@ -902,16 +902,23 @@ LYRICS
 ${song.lyrics.map((line, index) => `${index + 1}. ${line.english}`).join("\n")}`;
 }
 
+class TranslationJsonSyntaxError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TranslationJsonSyntaxError";
+  }
+}
+
 function parseImportedTranslation(raw: string, song: Song): ImportedTranslation[] {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("JSON 객체를 찾지 못했습니다. 모델의 전체 JSON 응답을 붙여 넣어주세요.");
+  if (start < 0 || end <= start) throw new TranslationJsonSyntaxError("JSON 객체를 찾지 못했습니다.");
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.slice(start, end + 1));
   } catch {
-    throw new Error("JSON 문법을 읽을 수 없습니다. 응답이 중간에 잘리지 않았는지 확인해주세요.");
+    throw new TranslationJsonSyntaxError("JSON 문법을 읽을 수 없습니다.");
   }
   if (!parsed || typeof parsed !== "object") throw new Error("올바른 JSON 객체가 아닙니다.");
 
@@ -967,6 +974,7 @@ function TranslationImportDialog({ song, onClose, onApply }: { song: Song; onClo
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [repairing, setRepairing] = useState(false);
 
   const copyPrompt = async () => {
     try {
@@ -978,24 +986,49 @@ function TranslationImportDialog({ song, onClose, onApply }: { song: Song; onClo
     }
   };
 
-  const apply = () => {
+  const apply = async () => {
     setError("");
     try {
       onApply(parseImportedTranslation(result, song));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "번역 JSON을 적용하지 못했습니다.");
+      if (!(caught instanceof TranslationJsonSyntaxError)) {
+        setError(caught instanceof Error ? caught.message : "번역 JSON을 적용하지 못했습니다.");
+        return;
+      }
+
+      setRepairing(true);
+      try {
+        const response = await fetch("/api/translate/repair", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ raw: result, expectedLineCount: song.lyrics.length }),
+        });
+        const data = await response.json() as { repaired?: string; error?: string };
+        if (!response.ok || !data.repaired) throw new Error(data.error ?? "JSON 문법을 자동 수정하지 못했습니다.");
+        setResult(data.repaired);
+        try {
+          const translated = parseImportedTranslation(data.repaired, song);
+          setRepairing(false);
+          onApply(translated);
+        } catch (validationError) {
+          throw new Error(`JSON 문법은 자동 수정했지만 내용 검증에 실패했습니다. ${validationError instanceof Error ? validationError.message : "결과를 확인해주세요."}`);
+        }
+      } catch (repairError) {
+        setError(repairError instanceof Error ? repairError.message : "JSON 문법을 자동 수정하지 못했습니다.");
+        setRepairing(false);
+      }
     }
   };
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (!repairing && event.currentTarget === event.target) onClose(); }}>
       <div className="dialog-card translation-import-dialog" role="dialog" aria-modal="true" aria-label="AI 번역 가져오기">
-        <div className="dialog-header"><div><p className="eyebrow">MODEL-INDEPENDENT TRANSLATION</p><h2>AI 번역 가져오기</h2><p>Claude, GPT 등 원하는 모델에서 전체 곡을 충분히 검토한 결과를 가져옵니다.</p></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div>
+        <div className="dialog-header"><div><p className="eyebrow">MODEL-INDEPENDENT TRANSLATION</p><h2>AI 번역 가져오기</h2><p>Claude, GPT 등 원하는 모델에서 전체 곡을 충분히 검토한 결과를 가져옵니다.</p></div><button className="icon-button" onClick={onClose} disabled={repairing}><X size={19} /></button></div>
         <div className="translation-import-body">
           <section className="translation-step"><div className="translation-step-head"><span>1</span><div><h3>전체 가사 프롬프트 복사</h3><p>번역 원칙과 정확한 JSON 형식이 포함되어 있습니다.</p></div><button className="copy-prompt-button" onClick={copyPrompt}>{copied ? <Check size={15} /> : <Sparkles size={15} />}{copied ? "복사됨" : "프롬프트 복사"}</button></div><textarea className="prompt-preview" readOnly value={prompt} /><div className="prompt-meta">{song.lyrics.length}개 문장 · {prompt.length.toLocaleString()}자 · 선택한 AI 서비스로 가사 원문이 전송됩니다.</div></section>
-          <section className="translation-step"><div className="translation-step-head"><span>2</span><div><h3>모델의 JSON 결과 붙여넣기</h3><p>코드 블록이 포함되어 있어도 JSON 부분을 자동으로 찾습니다.</p></div></div><textarea className="translation-json-input" value={result} onChange={(event) => { setResult(event.target.value); setError(""); }} placeholder={'{\n  "version": 1,\n  "lines": [\n    { "index": 1, "english": "...", "korean": "...", "note": null }\n  ]\n}'} />{error ? <div className="import-error"><AlertCircle size={15} /> {error}</div> : <div className="import-checks"><Check size={14} /> 적용 전에 문장 수·순서·영어 원문·반복 문장을 자동 검증합니다.</div>}</section>
+          <section className="translation-step"><div className="translation-step-head"><span>2</span><div><h3>모델의 JSON 결과 붙여넣기</h3><p>코드 블록을 제거하고, JSON 문법 오류는 DeepSeek가 자동 수정합니다.</p></div></div><textarea className="translation-json-input" value={result} onChange={(event) => { setResult(event.target.value); setError(""); }} disabled={repairing} placeholder={'{\n  "version": 1,\n  "lines": [\n    { "index": 1, "english": "...", "korean": "...", "note": null }\n  ]\n}'} />{repairing ? <div className="import-checks"><Loader2 className="spin" size={14} /> DeepSeek가 번역 내용은 유지하고 JSON 문법만 수정하고 있습니다.</div> : error ? <div className="import-error"><AlertCircle size={15} /> {error}</div> : <div className="import-checks"><Check size={14} /> 적용 전에 문장 수·순서·영어 원문·반복 문장을 자동 검증합니다.</div>}</section>
         </div>
-        <div className="dialog-footer"><p>검증을 통과한 번역과 NOTE는 현재 곡에 즉시 저장됩니다.</p><div><button className="cancel-button" onClick={onClose}>취소</button><button className="primary-button" onClick={apply} disabled={!result.trim()}><Check size={16} /> 검증 후 적용</button></div></div>
+        <div className="dialog-footer"><p>검증을 통과한 번역과 NOTE는 현재 곡에 즉시 저장됩니다.</p><div><button className="cancel-button" onClick={onClose} disabled={repairing}>취소</button><button className="primary-button" onClick={apply} disabled={!result.trim() || repairing}>{repairing ? <Loader2 className="spin" size={16} /> : <Check size={16} />} {repairing ? "JSON 자동 수정 중" : "검증 후 적용"}</button></div></div>
       </div>
     </div>
   );
