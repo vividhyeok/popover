@@ -162,7 +162,12 @@ export function PopoverApp() {
       return { ...value, progress: { ...value.progress, activeLine: activeIndex, lastStudiedAt: Date.now() } };
     });
     window.requestAnimationFrame(() => {
-      if (mode === "dictation") wordInputRefs.current.find(Boolean)?.focus({ preventScroll: true });
+      if (mode !== "dictation") return;
+      const line = song.lyrics[activeIndex];
+      const words = line?.english.trim().split(/\s+/).filter(Boolean) ?? [];
+      const results = line ? song.progress.lineProgress[line.id]?.wordResults ?? [] : [];
+      const pendingIndex = words.findIndex((_, index) => results[index] !== "correct");
+      wordInputRefs.current[pendingIndex >= 0 ? pendingIndex : 0]?.focus({ preventScroll: true });
     });
   }, [activeIndex, mode, song?.id, updateSong]);
 
@@ -202,6 +207,16 @@ export function PopoverApp() {
     seekLine(safeIndex);
   }, [mode, seekLine, song]);
 
+  const navigateStudyLine = useCallback((direction: -1 | 1) => {
+    if (!song) return;
+    let nextIndex = activeIndex + direction;
+    while (nextIndex >= 0 && nextIndex < song.lyrics.length && isSectionLine(song.lyrics[nextIndex].english)) {
+      nextIndex += direction;
+    }
+    if (nextIndex < 0 || nextIndex >= song.lyrics.length) return;
+    navigateToLine(nextIndex);
+  }, [activeIndex, navigateToLine, song]);
+
   const togglePlayback = useCallback(() => {
     if (!song) return;
     if (song.videoId) playerRef.current?.toggle();
@@ -227,6 +242,17 @@ export function PopoverApp() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
+      if (target.closest(".dialog-backdrop")) return;
+      if (mode === "dictation" && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        event.preventDefault();
+        event.stopPropagation();
+        navigateStudyLine(event.key === "ArrowUp" ? -1 : 1);
+        return;
+      }
+      if (mode === "dictation" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        return;
+      }
       if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable) return;
       if (event.code === "Space") {
         event.preventDefault();
@@ -237,7 +263,7 @@ export function PopoverApp() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeIndex, mode, seekLine, togglePlayback]);
+  }, [activeIndex, mode, navigateStudyLine, seekLine, togglePlayback]);
 
   const setRate = (rate: number) => {
     setPlaybackRate(rate);
@@ -276,6 +302,31 @@ export function PopoverApp() {
     : EMPTY_PROGRESS;
   const revealed = Boolean(activeProgress.revealed);
 
+  const focusWord = (wordIndex: number) => {
+    if (wordIndex < 0 || wordIndex >= activeWords.length) return;
+    window.requestAnimationFrame(() => {
+      const input = wordInputRefs.current[wordIndex];
+      input?.focus({ preventScroll: true });
+      input?.select();
+    });
+  };
+
+  const focusNextPendingWord = (wordIndex: number) => {
+    const results = activeProgress.wordResults ?? [];
+    for (let index = wordIndex + 1; index < activeWords.length; index += 1) {
+      if (results[index] !== "correct") {
+        focusWord(index);
+        return;
+      }
+    }
+    for (let index = 0; index < wordIndex; index += 1) {
+      if (results[index] !== "correct") {
+        focusWord(index);
+        return;
+      }
+    }
+  };
+
   const setWordDraft = (wordIndex: number, draft: string) => {
     if (!song || !activeLine) return;
     updateSong(song.id, (value) => ({
@@ -295,6 +346,26 @@ export function PopoverApp() {
         },
       },
     }));
+  };
+
+  const deferWord = (wordIndex: number) => {
+    if (!song || !activeLine || revealed) return;
+    updateSong(song.id, (value) => {
+      const before = value.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS;
+      const wordResults = [...(before.wordResults ?? [])];
+      if (wordResults[wordIndex] !== "correct") wordResults[wordIndex] = "skipped";
+      return {
+        ...value,
+        progress: {
+          ...value.progress,
+          lineProgress: {
+            ...value.progress.lineProgress,
+            [activeLine.id]: { ...before, wordResults },
+          },
+        },
+      };
+    });
+    focusNextPendingWord(wordIndex);
   };
 
   const checkWord = (wordIndex: number, currentDraft?: string) => {
@@ -328,7 +399,7 @@ export function PopoverApp() {
     });
     if (!correct) return;
     const nextWordIndex = activeWords.findIndex((_, index) => index > wordIndex && nextResults[index] !== "correct");
-    if (nextWordIndex >= 0) window.requestAnimationFrame(() => wordInputRefs.current[nextWordIndex]?.focus({ preventScroll: true }));
+    if (nextWordIndex >= 0) focusWord(nextWordIndex);
     if (completed) showToast("문장 완료 · 위·아래 버튼이나 오른쪽 목록으로 이동하세요.", "success");
   };
 
@@ -486,8 +557,13 @@ export function PopoverApp() {
           <div className="brand-mark"><span /></div>
           <div><strong>popover</strong><small>POP SONG STUDY DESK</small></div>
         </div>
-        <div className="now-playing-mini">
-          {song ? <><span className={playing ? "status-pulse active" : "status-pulse"} /> <b>{song.title}</b><span>·</span><span>{song.artist}</span></> : "곡을 추가해 시작하세요"}
+        <div className="study-view-nav" aria-label="학습 화면 선택">
+          <button className={mode === "listen" ? "active" : ""} onClick={() => setMode("listen")}>
+            <Languages size={16} /><span><b>듣기 학습</b><small>가사 이해·트래킹</small></span>
+          </button>
+          <button className={mode === "dictation" ? "active" : ""} onClick={() => setMode("dictation")}>
+            <Keyboard size={16} /><span><b>받아쓰기 연습</b><small>듣고 바로 입력</small></span>
+          </button>
         </div>
         <div className="top-actions">
           <button className="ghost-button" onClick={() => setSettingsOpen(true)}><Settings2 size={16} /> 설정</button>
@@ -495,7 +571,7 @@ export function PopoverApp() {
         </div>
       </header>
 
-      <div className="workspace">
+      <div className={`workspace ${mode === "dictation" ? "dictation-workspace" : "listen-workspace"}`}>
         <aside className="library-panel">
           <div className="panel-title-row">
             <div><p className="eyebrow">MY LIBRARY</p><h2>학습 곡</h2></div>
@@ -527,15 +603,15 @@ export function PopoverApp() {
           </div>
         </aside>
 
-        <section className="player-column">
+        <section className={`player-column ${mode === "dictation" ? "dictation-column" : "listening-column"}`}>
           {song ? (
             <>
               <div className="player-heading">
-                <div><p className="eyebrow">NOW STUDYING</p><h1>{song.title}</h1><p>{song.artist}</p></div>
+                <div><p className="eyebrow">{mode === "dictation" ? "DICTATION PRACTICE" : "LISTENING STUDY"}</p><h1>{song.title}</h1><p>{song.artist}</p></div>
                 {song.videoId ? <a className="youtube-link" href={`https://youtu.be/${song.videoId}`} target="_blank" rel="noreferrer"><ExternalLink size={14} /> YouTube</a> : <span className="demo-chip">DEMO</span>}
               </div>
 
-              <div className="video-stage">
+              <div className={`video-stage ${mode === "dictation" ? "dictation-video-stage" : ""}`}>
                 {song.videoId ? (
                   <YouTubePlayer
                     key={`${song.id}-${song.videoId}`}
@@ -554,95 +630,125 @@ export function PopoverApp() {
                 )}
               </div>
 
-              <div className={`focus-line-card ${mode === "dictation" ? "dictation-focus" : ""}`}>
-                <div className="focus-line-meta"><span>{activeLine ? `LINE ${String(activeIndex + 1).padStart(2, "0")}` : "WAITING"}</span><span>{activeLine ? formatTime(activeLine.start) : `첫 가사 ${formatTime(firstLyricVideoTime)}`}</span></div>
-                {mode === "listen" ? <p className="focus-english">{activeLine?.english ?? "첫 가사를 기다리는 중"}</p> : activeLine ? <span className="focus-purpose-label">한국어 의미만 보고, 들리는 어절을 하나씩 입력하세요</span> : null}
-                <p className="focus-korean">{activeLine?.korean ?? (song.lyrics.length ? `${formatTime(firstLyricVideoTime)}부터 문장 트래킹을 시작합니다.` : "번역을 가져오면 한국어 의미가 표시됩니다.")}</p>
-
-                {mode === "dictation" && activeLine ? (
-                  activeLineIsSection ? (
-                    <div className="section-line-skip"><span>이 줄은 곡의 구간 표시입니다. 위·아래 문장 버튼이나 오른쪽 목록으로 이동하세요.</span></div>
-                  ) : (
-                    <div className="word-practice">
-                      <div className="word-practice-head">
-                        <div><b>어절별 받아쓰기</b><span>{activeProgress.wordResults?.filter((result) => result === "correct").length ?? 0} / {activeWords.length} 정답</span></div>
-                        <button className="reveal-answer-button" onClick={revealAnswer} disabled={revealed}><Eye size={14} />{revealed ? "정답 공개됨" : "정답 보기"}</button>
-                      </div>
-                      <div className="word-flow" aria-label="문장 어절별 입력">
-                        {activeWords.map((word, wordIndex) => {
-                          const result = activeProgress.wordResults?.[wordIndex] ?? null;
-                          const wordWidth = Math.max(3, Math.min(normalizeWordAnswer(word).length, 18));
-                          return (
-                            <div className={`word-token ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`} style={{ width: `calc(${wordWidth}ch + 10px)` }}>
-                              <span className="word-token-label">{revealed ? word : String(wordIndex + 1).padStart(2, "0")}</span>
-                              <span className="word-input-wrap">
-                                <input
-                                  ref={(element) => { wordInputRefs.current[wordIndex] = element; }}
-                                  aria-label={`${wordIndex + 1}번째 어절`}
-                                  autoComplete="off"
-                                  spellCheck={false}
-                                  value={revealed && result === "wrong" ? word : (activeProgress.wordDrafts?.[wordIndex] ?? "")}
-                                  placeholder="…"
-                                  readOnly={revealed}
-                                  onChange={(event) => setWordDraft(wordIndex, event.target.value)}
-                                  onKeyDown={(event) => {
-                                    if (event.nativeEvent.isComposing) return;
-                                    if (event.key === "Enter" && activeWordsCompleted) {
-                                      event.preventDefault();
-                                    } else if (event.code === "Space") {
-                                      event.preventDefault();
-                                      checkWord(wordIndex, event.currentTarget.value);
-                                    } else if (event.key === "Enter") {
-                                      checkWord(wordIndex, event.currentTarget.value);
-                                    }
-                                  }}
-                                />
-                              </span>
-                              <small aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "오답" : ""}</small>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}><span>{activeWordsCompleted ? "문장 완료 · 위·아래 버튼 또는 오른쪽 목록으로 이동" : <><kbd>Space</kbd> 또는 <kbd>Enter</kbd>로 어절 확인 · 미완료 구간 자동 반복</>}</span><span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span></div>
+              {mode === "listen" ? (
+                <>
+                  <div className="focus-line-card listening-focus">
+                    <div className="focus-line-meta"><span>{activeLine ? `LINE ${String(activeIndex + 1).padStart(2, "0")}` : "WAITING"}</span><span>{activeLine ? formatTime(activeLine.start) : `첫 가사 ${formatTime(firstLyricVideoTime)}`}</span></div>
+                    <p className="focus-english">{activeLine?.english ?? "첫 가사를 기다리는 중"}</p>
+                    <p className="focus-korean">{activeLine?.korean ?? (song.lyrics.length ? `${formatTime(firstLyricVideoTime)}부터 문장 트래킹을 시작합니다.` : "번역을 가져오면 한국어 의미가 표시됩니다.")}</p>
+                    <div className="focus-note-slot">
+                      {activeLine?.note ? <div className="focus-note open"><b>STUDY NOTE</b><p>{activeLine.note}</p></div> : <div className="focus-note empty"><b>STUDY NOTE</b><p>이 문장에는 추가 학습 메모가 없습니다.</p></div>}
                     </div>
-                  )
-                ) : null}
+                  </div>
 
-                <div className="focus-note-slot">
-                  {activeLine?.note ? (
-                    mode === "dictation" ? (
-                      <details className="focus-note"><summary>STUDY NOTE 보기 <span>막힐 때만 열어보세요</span></summary><p>{activeLine.note}</p></details>
+                  <div className="transport-card listening-transport">
+                    <div className="timeline-row">
+                      <span>{formatTime(currentTime)}</span>
+                      <input aria-label="재생 위치" type="range" min={0} max={Math.max(duration, 1)} step={0.1} value={Math.min(currentTime, duration || 0)} onChange={(event) => seekTo(Number(event.target.value))} />
+                      <span>{formatTime(duration)}</span>
+                    </div>
+                    <div className="primary-controls">
+                      <button className="round-control" aria-label="이전 문장" onClick={() => navigateToLine(activeIndex - 1)}><ChevronLeft size={23} /></button>
+                      <button className="play-control" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}</button>
+                      <button className="round-control" aria-label="다음 문장" onClick={() => navigateToLine(activeIndex + 1)}><ChevronRight size={23} /></button>
+                    </div>
+                    <div className="utility-controls">
+                      <button className={loopLine ? "utility-button active" : "utility-button"} onClick={() => setLoopLine((value) => !value)}><RotateCcw size={15} /> 문장 반복</button>
+                      <label className="rate-control"><span>속도</span><select value={playbackRate} onChange={(event) => setRate(Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1.0×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option></select></label>
+                      <span className={song.videoId && !playerReady ? "ready-state pending" : "ready-state"}>{song.videoId && !playerReady ? "플레이어 연결 중" : "준비됨"}</span>
+                    </div>
+                  </div>
+
+                  <div className="sync-card compact">
+                    <div className="sync-title"><Clock3 size={16} /><div><b>첫 가사 시작 · {formatTime(firstLyricVideoTime)}</b><small>영상에서 첫 가사가 들리는 순간에 아래 버튼을 누르세요.</small></div></div>
+                    <button className="stamp-button" onClick={alignFirstLyricToCurrentTime}>현재 시점을 첫 가사 시작으로 지정</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="dictation-practice-card">
+                    <div className="dictation-line-head">
+                      <div><span>현재 연습 문장</span><b>{activeLine ? `LINE ${String(activeIndex + 1).padStart(2, "0")}` : "WAITING"}</b></div>
+                      <div className="dictation-line-score"><b>{activeProgress.wordResults?.filter((result) => result === "correct").length ?? 0}</b><span>/ {activeWords.length} 어절</span></div>
+                    </div>
+                    <div className="dictation-prompt">
+                      <span>KOREAN PROMPT</span>
+                      <p>{activeLine?.korean ?? "한국어 뜻을 준비하고 있습니다."}</p>
+                    </div>
+
+                    {activeLine ? activeLineIsSection ? (
+                      <div className="section-line-skip"><span>구간 표시입니다. <kbd>↑</kbd> 또는 <kbd>↓</kbd>로 실제 가사 문장으로 이동하세요.</span></div>
                     ) : (
-                      <div className="focus-note open"><b>STUDY NOTE</b><p>{activeLine.note}</p></div>
-                    )
-                  ) : (
-                    <div className="focus-note empty"><b>STUDY NOTE</b><p>이 문장에는 추가 학습 메모가 없습니다.</p></div>
-                  )}
-                </div>
-              </div>
+                      <div className="word-practice typing-practice">
+                        <div className="word-practice-head">
+                          <div><b>들리는 순서대로 입력</b><span>빈칸에서 Space를 누르면 보류</span></div>
+                          <button className="reveal-answer-button" onClick={revealAnswer} disabled={revealed}><Eye size={14} />{revealed ? "정답 공개됨" : "정답 보기"}</button>
+                        </div>
+                        <div className="word-flow" aria-label="문장 어절별 입력">
+                          {activeWords.map((word, wordIndex) => {
+                            const result = activeProgress.wordResults?.[wordIndex] ?? null;
+                            const wordWidth = Math.max(3, Math.min(normalizeWordAnswer(word).length, 18));
+                            return (
+                              <div className={`word-token ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`} style={{ width: `calc(${wordWidth}ch + 18px)` }}>
+                                <span className="word-token-label">{revealed ? word : String(wordIndex + 1).padStart(2, "0")}</span>
+                                <span className="word-input-wrap">
+                                  <input
+                                    ref={(element) => { wordInputRefs.current[wordIndex] = element; }}
+                                    aria-label={`${wordIndex + 1}번째 어절`}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={revealed && result === "wrong" ? word : (activeProgress.wordDrafts?.[wordIndex] ?? "")}
+                                    placeholder="…"
+                                    readOnly={revealed}
+                                    onFocus={(event) => event.currentTarget.select()}
+                                    onChange={(event) => setWordDraft(wordIndex, event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.nativeEvent.isComposing) return;
+                                      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space", "Enter"].includes(event.key) || event.code === "Space") {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                      }
+                                      if (event.key === "ArrowLeft") focusWord(wordIndex - 1);
+                                      else if (event.key === "ArrowRight") focusWord(wordIndex + 1);
+                                      else if (event.key === "ArrowUp") navigateStudyLine(-1);
+                                      else if (event.key === "ArrowDown") navigateStudyLine(1);
+                                      else if ((event.code === "Space" || event.key === "Enter") && !activeWordsCompleted && !revealed) {
+                                        const draft = event.currentTarget.value.trim();
+                                        if (draft) checkWord(wordIndex, draft);
+                                        else deferWord(wordIndex);
+                                      }
+                                    }}
+                                  />
+                                </span>
+                                <small aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "오답" : result === "skipped" ? "보류" : ""}</small>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}>
+                          <span>{activeWordsCompleted ? "문장 완료 · ↓로 다음 가사 이동" : "미완료 문장은 현재 구간을 계속 반복합니다."}</span>
+                          <span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span>
+                        </div>
+                      </div>
+                    ) : <div className="dictation-waiting">첫 가사 구간으로 이동하면 입력이 시작됩니다.</div>}
 
-              <div className="transport-card">
-                <div className="timeline-row">
-                  <span>{formatTime(currentTime)}</span>
-                  <input aria-label="재생 위치" type="range" min={0} max={Math.max(duration, 1)} step={0.1} value={Math.min(currentTime, duration || 0)} onChange={(event) => seekTo(Number(event.target.value))} />
-                  <span>{formatTime(duration)}</span>
-                </div>
-                <div className="primary-controls">
-                  <button className="round-control" aria-label="이전 문장" onClick={() => navigateToLine(activeIndex - 1)}>{mode === "dictation" ? <ChevronUp size={23} /> : <ChevronLeft size={23} />}</button>
-                  <button className="play-control" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}</button>
-                  <button className="round-control" aria-label="다음 문장" onClick={() => navigateToLine(activeIndex + 1)}>{mode === "dictation" ? <ChevronDown size={23} /> : <ChevronRight size={23} />}</button>
-                </div>
-                <div className="utility-controls">
-                  <button className={mode === "dictation" || loopLine ? "utility-button active" : "utility-button"} disabled={mode === "dictation"} onClick={() => setLoopLine((value) => !value)}><RotateCcw size={15} /> {mode === "dictation" ? "미완료 구간 자동 반복" : "문장 반복"}</button>
-                  <label className="rate-control"><span>속도</span><select value={playbackRate} onChange={(event) => setRate(Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1.0×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option></select></label>
-                  <span className={song.videoId && !playerReady ? "ready-state pending" : "ready-state"}>{song.videoId && !playerReady ? "플레이어 연결 중" : "준비됨"}</span>
-                </div>
-              </div>
+                    <div className="dictation-note-slot">
+                      {activeLine?.note ? <details className="focus-note"><summary>STUDY NOTE <span>필요할 때만 열기</span></summary><p>{activeLine.note}</p></details> : <div className="focus-note empty"><b>STUDY NOTE</b><p>이 문장에는 추가 학습 메모가 없습니다.</p></div>}
+                    </div>
+                  </div>
 
-              <div className="sync-card compact">
-                <div className="sync-title"><Clock3 size={16} /><div><b>첫 가사 시작 · {formatTime(firstLyricVideoTime)}</b><small>영상에서 첫 가사가 들리는 순간에 아래 버튼을 누르세요.</small></div></div>
-                <button className="stamp-button" onClick={alignFirstLyricToCurrentTime}>현재 시점을 첫 가사 시작으로 지정</button>
-              </div>
+                  <div className="dictation-transport">
+                    <button className="dictation-nav-button" onClick={() => navigateStudyLine(-1)}><ChevronUp size={20} /><span><small>↑</small> 이전 가사</span></button>
+                    <div className="dictation-playback">
+                      <button aria-label="현재 문장 처음부터 듣기" onClick={() => seekLine(activeIndex)}><RotateCcw size={17} /></button>
+                      <button className="dictation-play-button" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}</button>
+                      <label><span>속도</span><select value={playbackRate} onChange={(event) => setRate(Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1.0×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option></select></label>
+                      <em>미완료 구간 자동 반복</em>
+                    </div>
+                    <button className="dictation-nav-button" onClick={() => navigateStudyLine(1)}><ChevronDown size={20} /><span><small>↓</small> 다음 가사</span></button>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <div className="no-song"><Library size={36} /><h2>학습할 곡을 등록해주세요</h2><button className="primary-button" onClick={() => setAddOpen(true)}><Plus size={16} /> 곡 추가</button></div>
@@ -651,10 +757,9 @@ export function PopoverApp() {
 
         <section className="lyrics-panel">
           <div className="lyrics-toolbar">
-            <div><p className="eyebrow">LYRIC TRACKER</p><h2>{mode === "dictation" ? "문장 이동" : "문장 트래킹"}</h2></div>
+            <div className="lyrics-toolbar-copy"><p className="eyebrow">{mode === "dictation" ? "PRACTICE QUEUE" : "LYRIC TRACKER"}</p><h2>{mode === "dictation" ? "연습 문장" : "문장 트래킹"}</h2><small>{mode === "dictation" ? "한국어 뜻만 보고 원하는 줄로 이동" : "재생 위치에 맞춰 원문과 번역 확인"}</small></div>
             <div className="toolbar-actions">
               <button className="translate-button" disabled={!song} onClick={() => setTranslationImportOpen(true)}><Sparkles size={15} /> AI 번역 가져오기</button>
-              <div className="mode-switch"><button className={mode === "listen" ? "active" : ""} onClick={() => setMode("listen")}>듣기</button><button className={mode === "dictation" ? "active" : ""} onClick={() => setMode("dictation")}>받아쓰기</button></div>
             </div>
           </div>
           {translationProgress ? <div className={translationProgress.error ? "translation-status error" : "translation-status"}>{translationProgress.error ? <><AlertCircle size={14} /><span><b>{translationProgress.completed}/{translationProgress.total}줄까지 저장됨</b> · {translationProgress.error} 다시 누르면 이어서 번역합니다.</span></> : translating ? <><Loader2 className="spin" size={14} /><span><b>{translationProgress.completed}/{translationProgress.total}줄 번역 완료</b> · 받은 문장부터 바로 저장하고 있습니다.</span></> : null}</div> : <div className="translation-status" />}
@@ -665,19 +770,23 @@ export function PopoverApp() {
               const progress = song.progress.lineProgress[line.id];
               const isActive = index === activeIndex;
               return (
-                <button className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => navigateToLine(index)}>
+                <button className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => navigateToLine(index)} aria-current={isActive ? "true" : undefined}>
                   <span className="line-index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="line-body">
                     {mode === "listen" ? <span className="line-english">{line.english}</span> : null}
                     <span className="line-korean">{line.korean || "번역 대기 중"}</span>
                   </span>
-                  <span className="line-status">{progress?.completed ? <Check size={15} /> : formatTime(line.start)}</span>
+                  <span className="line-status">{progress?.completed ? <Check size={15} /> : mode === "dictation" && progress?.revealed ? "공개" : mode === "dictation" && progress?.wordResults?.includes("skipped") ? "보류" : formatTime(line.start)}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="shortcut-bar"><Keyboard size={15} /><span><kbd>Space</kbd> 재생</span>{mode === "listen" ? <><span><kbd>J</kbd>/<kbd>K</kbd> 문장 이동</span><span><kbd>R</kbd> 반복</span></> : <em>문장 이동은 위·아래 버튼 또는 오른쪽 목록만 사용</em>}</div>
+          {mode === "listen" ? (
+            <div className="shortcut-bar"><Keyboard size={15} /><span><kbd>Space</kbd> 재생</span><span><kbd>J</kbd>/<kbd>K</kbd> 문장 이동</span><span><kbd>R</kbd> 반복</span></div>
+          ) : (
+            <div className="shortcut-bar dictation-shortcuts"><Keyboard size={15} /><span><kbd>Space</kbd> 채점·보류</span><span><kbd>←</kbd>/<kbd>→</kbd> 어절</span><span><kbd>↑</kbd>/<kbd>↓</kbd> 가사</span><em>화살표는 재생 위치나 목록 스크롤을 바꾸지 않습니다</em></div>
+          )}
         </section>
       </div>
 

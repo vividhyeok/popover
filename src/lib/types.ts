@@ -12,7 +12,7 @@ export type LyricLine = {
 export type LineProgress = {
   draft: string;
   wordDrafts?: string[];
-  wordResults?: Array<"correct" | "wrong" | null>;
+  wordResults?: Array<"correct" | "wrong" | "skipped" | null>;
   revealed?: boolean;
   attempts: number;
   bestScore: number;

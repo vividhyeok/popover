@@ -121,6 +121,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(function You
           playerVars: {
             autoplay: 0,
             controls: 1,
+            disablekb: 1,
             modestbranding: 1,
             rel: 0,
             playsinline: 1,
