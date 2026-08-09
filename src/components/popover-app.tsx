@@ -44,6 +44,10 @@ const EMPTY_PROGRESS: LineProgress = { draft: "", wordDrafts: [], wordResults: [
 const isSectionLine = (english: string) => /^\[[^\]]+\]$/.test(english.trim());
 const normalizeWordAnswer = (value: string) => normalizeAnswer(value).replace(/[\s']/g, "");
 const normalizedLineKey = (value: string) => value.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
+const splitWordPunctuation = (value: string) => {
+  const match = value.match(/^([^A-Za-z0-9-]*)(.*?[A-Za-z0-9-])([^A-Za-z0-9-]*)$/);
+  return match ? { prefix: match[1], core: match[2], suffix: match[3] } : { prefix: "", core: value, suffix: "" };
+};
 
 async function requestLyricMergeSuggestions(target: Pick<Song, "title" | "artist" | "lyrics">) {
   let lastError = "가사 구조 분석에 실패했습니다.";
@@ -298,18 +302,10 @@ export function PopoverApp() {
   useEffect(() => {
     if (!playing || !activeLine || !song) return;
     const isDictationLine = mode === "dictation" && !isSectionLine(activeLine.english);
-    const lineCompleted = Boolean(song.progress.lineProgress[activeLine.id]?.completed);
-    const shouldRepeat = isDictationLine ? app.settings.dictationAutoRepeat && !lineCompleted : mode === "listen" && loopLine;
-    const shouldHold = isDictationLine && lineCompleted;
+    const shouldRepeat = isDictationLine ? app.settings.dictationAutoRepeat : mode === "listen" && loopLine;
     if (effectiveTime < activeLine.end - 0.12) return;
-    if (shouldRepeat) {
-      seekLine(activeIndex);
-    } else if (shouldHold) {
-      if (song.videoId) playerRef.current?.pause();
-      else setPlaying(false);
-      seekTo(activeLine.end - song.syncOffsetMs / 1000 - 0.08);
-    }
-  }, [activeIndex, activeLine, app.settings.dictationAutoRepeat, effectiveTime, loopLine, mode, playing, seekLine, seekTo, song]);
+    if (shouldRepeat) seekLine(activeIndex);
+  }, [activeIndex, activeLine, app.settings.dictationAutoRepeat, effectiveTime, loopLine, mode, playing, seekLine, song]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -425,7 +421,7 @@ export function PopoverApp() {
     }));
   };
 
-  const deferWord = (wordIndex: number) => {
+  const deferWord = (wordIndex: number, moveFocus = true) => {
     if (!song || !activeLine || revealed) return;
     updateSong(song.id, (value) => {
       const before = value.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS;
@@ -442,7 +438,7 @@ export function PopoverApp() {
         },
       };
     });
-    focusNextPendingWord(wordIndex);
+    if (moveFocus) focusNextPendingWord(wordIndex);
   };
 
   const checkWord = (wordIndex: number, currentDraft?: string) => {
@@ -841,47 +837,61 @@ export function PopoverApp() {
                         <div className="word-flow" aria-label="문장 어절별 입력">
                           {activeWords.map((word, wordIndex) => {
                             const result = activeProgress.wordResults?.[wordIndex] ?? null;
+                            const { prefix, core, suffix } = splitWordPunctuation(word);
                             const draft = activeProgress.wordDrafts?.[wordIndex] ?? "";
-                            const displayedValue = revealed && result === "wrong" ? word : draft;
+                            const displayedValue = revealed && result === "wrong" ? core : draft;
                             return (
-                              <div className={`word-token ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`}>
-                                <span className="word-token-label">{revealed ? word : String(wordIndex + 1).padStart(2, "0")}</span>
-                                <span className="word-input-wrap" data-value={displayedValue || "…"}>
-                                  <input
-                                    ref={(element) => { wordInputRefs.current[wordIndex] = element; }}
-                                    aria-label={`${wordIndex + 1}번째 어절`}
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    value={displayedValue}
-                                    placeholder="…"
-                                    readOnly={revealed}
-                                    onFocus={(event) => event.currentTarget.select()}
-                                    onChange={(event) => setWordDraft(wordIndex, event.target.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.nativeEvent.isComposing) return;
-                                      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space", "Enter"].includes(event.key) || event.code === "Space") {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                      }
-                                      if (event.key === "ArrowLeft") focusWord(wordIndex - 1);
-                                      else if (event.key === "ArrowRight") focusWord(wordIndex + 1);
-                                      else if (event.key === "ArrowUp") navigateStudyLine(-1);
-                                      else if (event.key === "ArrowDown") navigateStudyLine(1);
-                                      else if ((event.code === "Space" || event.key === "Enter") && !activeWordsCompleted && !revealed) {
-                                        const draft = event.currentTarget.value.trim();
-                                        if (draft) checkWord(wordIndex, draft);
-                                        else deferWord(wordIndex);
-                                      }
-                                    }}
-                                  />
-                                </span>
-                                <small aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "오답" : result === "skipped" ? "보류" : ""}</small>
+                              <div className="word-entry" key={`${activeLine.id}-${wordIndex}`}>
+                                {prefix ? <span className="word-punctuation" aria-hidden="true">{prefix}</span> : null}
+                                <div className={`word-token ${result ?? ""}`} title={result === "correct" ? "정답" : result === "wrong" ? "오답" : result === "skipped" ? "보류" : undefined}>
+                                  <span className="word-input-wrap">
+                                    <span className="word-width-probe" aria-hidden="true">{core || "…"}</span>
+                                    <span className="word-width-probe" aria-hidden="true">{displayedValue || "…"}</span>
+                                    <input
+                                      ref={(element) => { wordInputRefs.current[wordIndex] = element; }}
+                                      aria-label={`${wordIndex + 1}번째 어절`}
+                                      autoComplete="off"
+                                      spellCheck={false}
+                                      value={displayedValue}
+                                      placeholder="…"
+                                      readOnly={revealed}
+                                      onFocus={(event) => event.currentTarget.select()}
+                                      onChange={(event) => setWordDraft(wordIndex, event.target.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.nativeEvent.isComposing) return;
+                                        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space", "Enter"].includes(event.key) || event.code === "Space") {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                        }
+                                        if (event.key === "ArrowLeft") focusWord(wordIndex - 1);
+                                        else if (event.key === "ArrowRight") focusWord(wordIndex + 1);
+                                        else if (event.key === "ArrowUp") navigateStudyLine(-1);
+                                        else if (event.key === "ArrowDown") navigateStudyLine(1);
+                                        else if ((event.code === "Space" || event.key === "Enter") && !revealed) {
+                                          const isEnter = event.key === "Enter";
+                                          const isLastWord = wordIndex === activeWords.length - 1;
+                                          if (!activeWordsCompleted) {
+                                            const currentDraft = event.currentTarget.value.trim();
+                                            if (currentDraft) checkWord(wordIndex, currentDraft);
+                                            else deferWord(wordIndex, !(isEnter && isLastWord));
+                                          }
+                                          if (isEnter) {
+                                            if (isLastWord) navigateStudyLine(1);
+                                            else focusWord(wordIndex + 1);
+                                          }
+                                        }
+                                      }}
+                                    />
+                                  </span>
+                                  <span className="word-result" aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "오답" : result === "skipped" ? "보류" : ""}</span>
+                                </div>
+                                {suffix ? <span className="word-punctuation" aria-hidden="true">{suffix}</span> : null}
                               </div>
                             );
                           })}
                         </div>
                         <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}>
-                          <span>{activeWordsCompleted ? "문장 완료 · ↓로 다음 가사 이동" : "미완료 문장은 현재 구간을 계속 반복합니다."}</span>
+                          <span>{activeWordsCompleted ? "문장 완료 · 마지막 칸에서 Enter로 다음 가사 이동" : "미완료 문장은 현재 구간을 계속 반복합니다."}</span>
                           <span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span>
                         </div>
                       </div>
@@ -955,7 +965,7 @@ export function PopoverApp() {
           {mode === "listen" ? (
             <div className="shortcut-bar"><Keyboard size={15} /><span><kbd>Space</kbd> 재생</span><span><kbd>J</kbd>/<kbd>K</kbd> 문장 이동</span><span><kbd>R</kbd> 반복</span></div>
           ) : (
-            <div className="shortcut-bar dictation-shortcuts"><Keyboard size={15} /><span><kbd>Space</kbd> 채점·보류</span><span><kbd>←</kbd>/<kbd>→</kbd> 어절</span><span><kbd>↑</kbd>/<kbd>↓</kbd> 가사</span><em>화살표는 재생 위치나 목록 스크롤을 바꾸지 않습니다</em></div>
+            <div className="shortcut-bar dictation-shortcuts"><Keyboard size={15} /><span><kbd>Space</kbd> 채점·보류</span><span><kbd>Enter</kbd> 다음 어절·가사</span><span><kbd>←</kbd>/<kbd>→</kbd> 어절</span><span><kbd>↑</kbd>/<kbd>↓</kbd> 가사</span><em>화살표는 재생 위치나 목록 스크롤을 바꾸지 않습니다</em></div>
           )}
         </section>
       </div>
