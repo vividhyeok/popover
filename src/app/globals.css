@@ -126,21 +126,29 @@ h1, h2, h3, p { margin-top: 0; }
 .dictation-prompt { padding: 15px 0 12px; }.dictation-prompt > span { display: block; margin-bottom: 6px; color: var(--accent-dark); font-size: 8px; font-weight: 900; letter-spacing: 1.1px; }.dictation-prompt p { margin: 0; color: var(--ink); font-size: clamp(16px, 1.35vw, 20px); font-weight: 800; line-height: 1.5; }
 .typing-practice { margin-top: 0; padding-top: 11px; }.typing-practice .word-practice-head { margin-bottom: 9px; }.typing-practice .word-practice-head b { font-size: 12px; }
 .typing-practice .word-flow { min-height: 112px; padding: 15px 16px 11px; gap: 9px 11px; align-content: flex-start; background: #f5f2ea; border-color: #d1cbc0; }
-.typing-practice .word-token { min-width: 48px; max-width: 190px; padding: 4px 5px 2px; border-radius: 6px; }
+.typing-practice .word-token { width: max-content; min-width: 48px; max-width: none; padding: 4px 5px 2px; border-radius: 6px; }
 .typing-practice .word-token:focus-within { background: white; box-shadow: 0 0 0 3px rgba(136,170,33,.18); }.typing-practice .word-token:focus-within .word-input-wrap { border-color: var(--accent-dark); }
-.typing-practice .word-token-label { height: 14px; font-size: 8px; }.typing-practice .word-input-wrap input { height: 34px; padding: 0 2px; font-size: 17px; letter-spacing: -.25px; }
+.typing-practice .word-token-label { height: 14px; font-size: 8px; }
+.typing-practice .word-input-wrap { width: auto; min-width: 38px; display: inline-grid; grid-template-columns: minmax(38px, max-content); font-size: 17px; font-weight: 700; letter-spacing: -.25px; vertical-align: top; }
+.typing-practice .word-input-wrap::after { content: attr(data-value) " "; grid-area: 1 / 1; min-width: 0; padding: 0 2px; visibility: hidden; white-space: pre; user-select: none; pointer-events: none; font: inherit; letter-spacing: inherit; }
+.typing-practice .word-input-wrap input { grid-area: 1 / 1; width: 100%; min-width: 0; height: 34px; padding: 0 2px; font: inherit; letter-spacing: inherit; }
 .typing-practice .word-token small { height: 13px; padding-top: 3px; font-size: 8px; }
 .typing-practice .word-practice-foot { margin-top: 9px; font-size: 9px; }
 .dictation-note-slot { height: 70px; margin-top: 16px; }.dictation-note-slot .focus-note { padding: 10px 12px; }
 .dictation-waiting { min-height: 92px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 10px; }
 .section-line-skip kbd { margin: 0 2px; padding: 2px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: white; color: var(--ink); font: 9px monospace; }
-.dictation-transport { grid-column: 1; grid-row: 3; margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: stretch; }
-.dictation-nav-button { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }.dictation-nav-button:hover { border-color: var(--accent-dark); background: #f7fadf; }.dictation-nav-button span, .dictation-nav-button small { display: block; }.dictation-nav-button span { font-size: 10px; font-weight: 800; }.dictation-nav-button small { margin-bottom: 2px; color: var(--accent-dark); font: 8px monospace; }
-.dictation-nav-button { min-height: 52px; }.dictation-playback { grid-column: 1 / -1; min-width: 0; min-height: 60px; border-radius: 10px; background: var(--ink); color: white; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 8px 10px; }.dictation-playback > button { width: 33px; height: 33px; flex: none; border: 0; border-radius: 50%; background: rgba(255,255,255,.1); color: white; display: grid; place-items: center; cursor: pointer; }.dictation-playback > button:hover { background: rgba(255,255,255,.2); }.dictation-playback .dictation-play-button { width: 42px; height: 42px; background: var(--accent); color: var(--ink); }
+.dictation-transport { grid-column: 1; grid-row: 3; margin-top: 10px; }
+.dictation-playback { min-width: 0; min-height: 60px; border-radius: 10px; background: var(--ink); color: white; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 8px 10px; }.dictation-playback > button { width: 33px; height: 33px; flex: none; border: 0; border-radius: 50%; background: rgba(255,255,255,.1); color: white; display: grid; place-items: center; cursor: pointer; }.dictation-playback > button:hover { background: rgba(255,255,255,.2); }.dictation-playback .dictation-play-button { width: 42px; height: 42px; background: var(--accent); color: var(--ink); }
 .dictation-playback label { display: flex; align-items: center; gap: 5px; color: #bbb4bb; font-size: 8px; }.dictation-playback select { border: 0; border-radius: 5px; background: #2b242b; color: white; padding: 4px; font-size: 9px; }.dictation-playback em { color: var(--accent); font-size: 8px; font-style: normal; font-weight: 800; white-space: nowrap; }
 .dictation-playback .dictation-repeat-toggle { width: auto; height: 30px; padding: 0 8px; border-radius: 6px; color: #bbb4bb; gap: 4px; font-size: 8px; font-weight: 800; white-space: nowrap; }.dictation-playback .dictation-repeat-toggle.active { background: rgba(201,255,61,.14); color: var(--accent); }
 .lyrics-toolbar-copy small { display: block; margin-top: 5px; color: var(--muted); font-size: 8px; }.dictation-workspace .lyrics-toolbar { padding-top: 17px; }
-.dictation-row .line-status { min-width: 30px; font-weight: 800; }.dictation-shortcuts { gap: 11px; }.dictation-shortcuts em { font-size: 8px; }
+.dictation-row { grid-template-columns: 30px minmax(0, 1fr) 58px; }
+.dictation-row .line-status { min-width: 30px; font-weight: 800; }
+.dictation-line-progress { width: 58px; display: grid; gap: 5px; padding-top: 1px; }
+.line-progress-count { display: flex; align-items: center; justify-content: flex-end; gap: 3px; color: var(--muted); font-size: 8px; line-height: 1; }.line-progress-count svg { color: var(--accent-dark); }.line-progress-count b { color: var(--ink); font-size: 10px; }.lyric-row.active .line-progress-count b { color: var(--accent-dark); }
+.line-progress-track { width: 58px; height: 3px; display: flex; overflow: hidden; background: #ddd8ce; border-radius: 999px; }.line-progress-track i { display: block; height: 100%; flex: none; }.line-progress-track .correct { background: var(--accent-dark); }.line-progress-track .wrong { background: var(--danger); }.line-progress-track .skipped { background: #c99728; }
+.section-status { color: #aaa2a8; }
+.dictation-shortcuts { gap: 11px; }.dictation-shortcuts em { font-size: 8px; }
 
 .dialog-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(23,18,23,.7); display: grid; place-items: center; padding: 22px; }
 .dialog-card { width: min(930px, calc(100vw - 44px)); max-height: calc(100vh - 44px); background: var(--surface); border-radius: 13px; box-shadow: 0 30px 90px rgba(0,0,0,.35); display: flex; flex-direction: column; overflow: hidden; }

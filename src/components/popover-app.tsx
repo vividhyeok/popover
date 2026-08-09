@@ -5,10 +5,8 @@
 import {
   AlertCircle,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   CircleCheck,
   Clock3,
   ExternalLink,
@@ -87,6 +85,7 @@ export function PopoverApp() {
   const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
   const wordInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const activeLyricRowRef = useRef<HTMLButtonElement>(null);
   const currentTimeRef = useRef(0);
 
   useEffect(() => {
@@ -193,6 +192,12 @@ export function PopoverApp() {
       wordInputRefs.current[pendingIndex >= 0 ? pendingIndex : 0]?.focus({ preventScroll: true });
     });
   }, [activeIndex, mode, song?.id, updateSong]);
+
+  useEffect(() => {
+    const row = activeLyricRowRef.current;
+    if (!row) return;
+    window.requestAnimationFrame(() => row.scrollIntoView({ block: "nearest" }));
+  }, [activeIndex, mode]);
 
   useEffect(() => {
     if (!song) return;
@@ -836,17 +841,18 @@ export function PopoverApp() {
                         <div className="word-flow" aria-label="문장 어절별 입력">
                           {activeWords.map((word, wordIndex) => {
                             const result = activeProgress.wordResults?.[wordIndex] ?? null;
-                            const wordWidth = Math.max(3, Math.min(normalizeWordAnswer(word).length, 18));
+                            const draft = activeProgress.wordDrafts?.[wordIndex] ?? "";
+                            const displayedValue = revealed && result === "wrong" ? word : draft;
                             return (
-                              <div className={`word-token ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`} style={{ width: `calc(${wordWidth}ch + 18px)` }}>
+                              <div className={`word-token ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`}>
                                 <span className="word-token-label">{revealed ? word : String(wordIndex + 1).padStart(2, "0")}</span>
-                                <span className="word-input-wrap">
+                                <span className="word-input-wrap" data-value={displayedValue || "…"}>
                                   <input
                                     ref={(element) => { wordInputRefs.current[wordIndex] = element; }}
                                     aria-label={`${wordIndex + 1}번째 어절`}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    value={revealed && result === "wrong" ? word : (activeProgress.wordDrafts?.[wordIndex] ?? "")}
+                                    value={displayedValue}
                                     placeholder="…"
                                     readOnly={revealed}
                                     onFocus={(event) => event.currentTarget.select()}
@@ -887,14 +893,12 @@ export function PopoverApp() {
                   </div>
 
                   <div className="dictation-transport">
-                    <button className="dictation-nav-button" onClick={() => navigateStudyLine(-1)}><ChevronUp size={20} /><span><small>↑</small> 이전 가사</span></button>
                     <div className="dictation-playback">
                       <button aria-label="현재 문장 처음부터 듣기" onClick={() => seekLine(activeIndex)}><RotateCcw size={17} /></button>
                       <button className="dictation-play-button" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}</button>
                       <label><span>속도</span><select value={playbackRate} onChange={(event) => setRate(Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1.0×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option></select></label>
                       <button className={app.settings.dictationAutoRepeat ? "dictation-repeat-toggle active" : "dictation-repeat-toggle"} onClick={() => setApp((state) => ({ ...state, settings: { ...state.settings, dictationAutoRepeat: !state.settings.dictationAutoRepeat } }))}><RotateCcw size={14} /> 자동 반복 {app.settings.dictationAutoRepeat ? "켬" : "끔"}</button>
                     </div>
-                    <button className="dictation-nav-button" onClick={() => navigateStudyLine(1)}><ChevronDown size={20} /><span><small>↓</small> 다음 가사</span></button>
                   </div>
                 </>
               )}
@@ -918,14 +922,31 @@ export function PopoverApp() {
             {song?.lyrics.map((line, index) => {
               const progress = song.progress.lineProgress[line.id];
               const isActive = index === activeIndex;
+              const words = isSectionLine(line.english) ? [] : line.english.trim().split(/\s+/).filter(Boolean);
+              const results = progress?.wordResults ?? [];
+              const correctWords = words.filter((_, wordIndex) => results[wordIndex] === "correct").length;
+              const wrongWords = words.filter((_, wordIndex) => results[wordIndex] === "wrong").length;
+              const skippedWords = words.filter((_, wordIndex) => results[wordIndex] === "skipped").length;
+              const practiceLabel = `정답 ${correctWords}개, 오답 ${wrongWords}개, 보류 ${skippedWords}개, 전체 ${words.length}개`;
               return (
-                <button className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => navigateToLine(index)} aria-current={isActive ? "true" : undefined}>
+                <button ref={isActive ? activeLyricRowRef : undefined} className={`${isActive ? "lyric-row active" : "lyric-row"} ${mode === "dictation" ? "dictation-row" : ""}`} key={line.id} onClick={() => navigateToLine(index)} aria-current={isActive ? "true" : undefined}>
                   <span className="line-index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="line-body">
                     {mode === "listen" ? <span className="line-english">{line.english}</span> : null}
                     <span className="line-korean">{line.korean || "번역 대기 중"}</span>
                   </span>
-                  <span className="line-status">{progress?.completed ? <Check size={15} /> : mode === "dictation" && progress?.revealed ? "공개" : mode === "dictation" && progress?.wordResults?.includes("wrong") ? "오답" : mode === "dictation" && progress?.wordResults?.includes("skipped") ? "보류" : formatTime(line.start)}</span>
+                  {mode === "dictation" ? words.length ? (
+                    <span className="line-status dictation-line-progress" aria-label={practiceLabel} title={practiceLabel}>
+                      <span className="line-progress-count">{progress?.completed ? <Check size={12} /> : null}<b>{correctWords}</b><span>/ {words.length}</span></span>
+                      <span className="line-progress-track" aria-hidden="true">
+                        <i className="correct" style={{ width: `${(correctWords / words.length) * 100}%` }} />
+                        <i className="wrong" style={{ width: `${(wrongWords / words.length) * 100}%` }} />
+                        <i className="skipped" style={{ width: `${(skippedWords / words.length) * 100}%` }} />
+                      </span>
+                    </span>
+                  ) : <span className="line-status section-status">구간</span> : (
+                    <span className="line-status">{progress?.completed ? <Check size={15} /> : formatTime(line.start)}</span>
+                  )}
                 </button>
               );
             })}
