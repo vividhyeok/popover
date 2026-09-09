@@ -87,6 +87,10 @@ export function PopoverApp() {
   const [translating, setTranslating] = useState(false);
   const [mergingLyrics, setMergingLyrics] = useState(false);
   const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
+  const [showListeningKorean, setShowListeningKorean] = useState(false);
+  const [showListeningNote, setShowListeningNote] = useState(false);
+  const [dictationMeaningRevealed, setDictationMeaningRevealed] = useState(false);
+  const [reviewQueue, setReviewQueue] = useState<number[] | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
   const wordInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const activeLyricRowRef = useRef<HTMLButtonElement>(null);
@@ -127,8 +131,26 @@ export function PopoverApp() {
   const duration = playerDuration || song?.duration || song?.lyrics.at(-1)?.end || 0;
 
   useEffect(() => {
-    setDictationLineIndex(mode === "dictation" ? Math.max(trackedIndex, 0) : null);
+    if (mode === "dictation") {
+      setDictationLineIndex(reviewQueue?.length ? reviewQueue[0] : Math.max(trackedIndex, 0));
+    } else {
+      setDictationLineIndex(null);
+    }
   }, [mode, song?.id]);
+
+  useEffect(() => {
+    setShowListeningKorean(false);
+    setShowListeningNote(false);
+    setDictationMeaningRevealed(false);
+  }, [activeLine?.id, song?.id]);
+
+  useEffect(() => {
+    setReviewQueue(null);
+  }, [song?.id]);
+
+  useEffect(() => {
+    if (mode !== "dictation") setReviewQueue(null);
+  }, [mode]);
 
   const updateSong = useCallback((id: string, updater: (value: Song) => Song) => {
     setApp((state) => ({ ...state, songs: state.songs.map((item) => (item.id === id ? updater(item) : item)) }));
@@ -232,6 +254,14 @@ export function PopoverApp() {
     [seekTo, song],
   );
 
+  const nudgeSync = useCallback((deltaMs: number) => {
+    if (!song) return;
+    updateSong(song.id, (value) => ({
+      ...value,
+      syncOffsetMs: Math.max(-10000, Math.min(10000, value.syncOffsetMs + deltaMs)),
+    }));
+  }, [song, updateSong]);
+
   const gradeCurrentLineBeforeMovingForward = useCallback(() => {
     if (!song || mode !== "dictation") return;
     const line = song.lyrics[activeIndex];
@@ -285,13 +315,21 @@ export function PopoverApp() {
 
   const navigateStudyLine = useCallback((direction: -1 | 1) => {
     if (!song) return;
+    if (mode === "dictation" && reviewQueue?.length) {
+      const currentPosition = reviewQueue.indexOf(activeIndex);
+      const nextPosition = currentPosition + direction;
+      if (currentPosition >= 0 && nextPosition >= 0 && nextPosition < reviewQueue.length) {
+        navigateToLine(reviewQueue[nextPosition]);
+      }
+      return;
+    }
     let nextIndex = activeIndex + direction;
     while (nextIndex >= 0 && nextIndex < song.lyrics.length && isSectionLine(song.lyrics[nextIndex].english)) {
       nextIndex += direction;
     }
     if (nextIndex < 0 || nextIndex >= song.lyrics.length) return;
     navigateToLine(nextIndex);
-  }, [activeIndex, navigateToLine, song]);
+  }, [activeIndex, mode, navigateToLine, reviewQueue, song]);
 
   const togglePlayback = useCallback(() => {
     if (!song) return;
@@ -328,10 +366,14 @@ export function PopoverApp() {
       } else if (mode === "listen" && event.key.toLowerCase() === "j") seekLine(activeIndex - 1);
       else if (mode === "listen" && event.key.toLowerCase() === "k") seekLine(activeIndex + 1);
       else if (mode === "listen" && event.key.toLowerCase() === "r") setLoopLine((value) => !value);
+      else if (mode === "listen" && event.key.toLowerCase() === "t") setShowListeningKorean((value) => !value);
+      else if (mode === "listen" && event.key.toLowerCase() === "n" && activeLine?.note) setShowListeningNote((value) => !value);
+      else if (mode === "listen" && event.key === "[") nudgeSync(-200);
+      else if (mode === "listen" && event.key === "]") nudgeSync(200);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeIndex, mode, navigateStudyLine, seekLine, togglePlayback]);
+  }, [activeIndex, activeLine?.note, mode, navigateStudyLine, nudgeSync, seekLine, togglePlayback]);
 
   const setRate = (rate: number) => {
     setPlaybackRate(rate);
@@ -374,6 +416,12 @@ export function PopoverApp() {
     ? song?.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS
     : EMPTY_PROGRESS;
   const revealed = Boolean(activeProgress.revealed);
+  const correctAttemptCount = activeProgress.wordResults?.filter((result) => result === "correct").length ?? 0;
+  const wrongResultCount = activeProgress.wordResults?.filter((result) => result === "wrong").length ?? 0;
+  const skippedResultCount = activeProgress.wordResults?.filter((result) => result === "skipped").length ?? 0;
+  const errorPressure = Math.max(0, activeProgress.attempts - correctAttemptCount) + wrongResultCount + skippedResultCount;
+  const adaptiveHintLevel = revealed ? 0 : errorPressure >= 6 ? 2 : errorPressure >= 3 ? 1 : 0;
+  const showDictationMeaning = app.settings.showKoreanInDictation || dictationMeaningRevealed;
 
   const focusWord = (wordIndex: number) => {
     if (wordIndex < 0 || wordIndex >= activeWords.length) return;
@@ -694,6 +742,39 @@ export function PopoverApp() {
     ? song.lyrics.filter((line) => !isSectionLine(line.english) && song.progress.lineProgress[line.id]?.completed).length
     : 0;
   const activeWordsCompleted = activeWords.length > 0 && activeWords.every((_, index) => activeProgress.wordResults?.[index] === "correct");
+  const reviewCandidates = useMemo(() => {
+    if (!song) return [] as number[];
+    return song.lyrics
+      .map((line, index) => {
+        if (isSectionLine(line.english)) return null;
+        const progress = song.progress.lineProgress[line.id];
+        if (!progress || progress.attempts <= 0) return null;
+        const wordCount = Math.max(1, line.english.trim().split(/\s+/).filter(Boolean).length);
+        const extraAttempts = Math.max(0, progress.attempts - wordCount);
+        const needsReview = Boolean(progress.revealed || progress.bestScore < 100 || !progress.completed || extraAttempts > 0);
+        if (!needsReview) return null;
+        const score = (progress.revealed ? 90 : 0)
+          + (100 - progress.bestScore)
+          + Math.min(extraAttempts, 12) * 7
+          + (progress.completed ? 0 : 30);
+        return { index, score };
+      })
+      .filter((item): item is { index: number; score: number } => Boolean(item))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((item) => item.index);
+  }, [song]);
+  const reviewActive = mode === "dictation" && Boolean(reviewQueue?.length);
+
+  const startReview = () => {
+    if (!song || !reviewCandidates.length) return;
+    const queue = [...reviewCandidates];
+    setReviewQueue(queue);
+    setMode("dictation");
+    setDictationLineIndex(queue[0]);
+    seekLine(queue[0]);
+    showToast(`지난 학습에서 어려웠던 ${queue.length}문장만 모았습니다.`, "success");
+  };
 
   if (!hydrated) return <div className="app-loading">Popover를 준비하고 있습니다…</div>;
 
@@ -785,10 +866,12 @@ export function PopoverApp() {
                   <div className="focus-line-card listening-focus">
                     <div className="focus-line-meta"><span>{activeLine ? `LINE ${String(activeIndex + 1).padStart(2, "0")}` : "WAITING"}</span><span>{activeLine ? formatTime(activeLine.start) : `첫 가사 ${formatTime(firstLyricVideoTime)}`}</span></div>
                     <p className="focus-english">{activeLine?.english ?? "첫 가사를 기다리는 중"}</p>
-                    <p className="focus-korean">{activeLine?.korean ?? (song.lyrics.length ? `${formatTime(firstLyricVideoTime)}부터 문장 트래킹을 시작합니다.` : "번역을 가져오면 한국어 의미가 표시됩니다.")}</p>
-                    <div className="focus-note-slot">
-                      {activeLine?.note ? <div className="focus-note open"><b>STUDY NOTE</b><p>{activeLine.note}</p></div> : <div className="focus-note empty"><b>STUDY NOTE</b><p>이 문장에는 추가 학습 메모가 없습니다.</p></div>}
+                    <div className="learning-reveal-actions">
+                      <button className={showListeningKorean ? "learning-reveal-button active" : "learning-reveal-button"} onClick={() => setShowListeningKorean((value) => !value)} disabled={!activeLine?.korean}><Eye size={14} /> {showListeningKorean ? "뜻 숨기기" : "뜻 보기"} <kbd>T</kbd></button>
+                      {activeLine?.note ? <button className={showListeningNote ? "learning-reveal-button active" : "learning-reveal-button"} onClick={() => setShowListeningNote((value) => !value)}><Sparkles size={14} /> {showListeningNote ? "표현 숨기기" : "표현 보기"} <kbd>N</kbd></button> : null}
                     </div>
+                    {showListeningKorean ? <p className="focus-korean progressive-reveal">{activeLine?.korean ?? "번역을 가져오면 한국어 의미가 표시됩니다."}</p> : null}
+                    {showListeningNote && activeLine?.note ? <div className="focus-note-slot progressive-reveal"><div className="focus-note open"><b>STUDY NOTE</b><p>{activeLine.note}</p></div></div> : null}
                   </div>
 
                   <div className="transport-card listening-transport">
@@ -810,20 +893,26 @@ export function PopoverApp() {
                   </div>
 
                   <div className="sync-card compact">
-                    <div className="sync-title"><Clock3 size={16} /><div><b>첫 가사 시작 · {formatTime(firstLyricVideoTime)}</b><small>영상에서 첫 가사가 들리는 순간에 아래 버튼을 누르세요.</small></div></div>
-                    <button className="stamp-button" onClick={alignFirstLyricToCurrentTime}>현재 시점을 첫 가사 시작으로 지정</button>
+                    <div className="sync-title"><Clock3 size={16} /><div><b>첫 가사 시작 · {formatTime(firstLyricVideoTime)}</b><small>처음에는 시작점을 맞추고, 듣다가 어긋나면 0.2초씩 미세 보정하세요.</small></div></div>
+                    <div className="sync-actions">
+                      <div className="sync-nudge-group">
+                        <button className="sync-nudge-button" onClick={() => nudgeSync(-200)} title="가사가 소리보다 빠를 때 늦춥니다.">← 가사 늦게</button>
+                        <span className="sync-offset-label">{song.syncOffsetMs >= 0 ? "+" : ""}{(song.syncOffsetMs / 1000).toFixed(1)}s</span>
+                        <button className="sync-nudge-button" onClick={() => nudgeSync(200)} title="가사가 소리보다 늦을 때 당깁니다.">가사 빠르게 →</button>
+                      </div>
+                      <button className="stamp-button" onClick={alignFirstLyricToCurrentTime}>현재 시점을 첫 가사 시작으로 지정</button>
+                    </div>
                   </div>
                 </>
               ) : (
                 <>
                   <div className="dictation-practice-card">
                     <div className="dictation-line-head">
-                      <div><span>현재 연습 문장</span><b>{activeLine ? `LINE ${String(activeIndex + 1).padStart(2, "0")}` : "WAITING"}</b></div>
+                      <div><span>{reviewActive ? "어려웠던 문장 복습" : "현재 연습 문장"}</span><b>{activeLine ? `LINE ${String(activeIndex + 1).padStart(2, "0")}` : "WAITING"}</b></div>
                       <div className="dictation-line-score"><b>{activeProgress.wordResults?.filter((result) => result === "correct").length ?? 0}</b><span>/ {activeWords.length} 어절</span></div>
                     </div>
-                    <div className="dictation-prompt">
-                      <span>KOREAN PROMPT</span>
-                      <p>{activeLine?.korean ?? "한국어 뜻을 준비하고 있습니다."}</p>
+                    <div className={showDictationMeaning ? "dictation-prompt" : "dictation-prompt concealed"}>
+                      {showDictationMeaning ? <><div className="dictation-prompt-head"><span>KOREAN PROMPT</span>{!app.settings.showKoreanInDictation ? <button onClick={() => setDictationMeaningRevealed(false)}>힌트 숨기기</button> : null}</div><p>{activeLine?.korean ?? "한국어 뜻을 준비하고 있습니다."}</p></> : <button className="dictation-meaning-button" onClick={() => setDictationMeaningRevealed(true)}><Eye size={14} /> 한국어 뜻 힌트 보기</button>}
                     </div>
 
                     {activeLine ? activeLineIsSection ? (
@@ -840,6 +929,11 @@ export function PopoverApp() {
                             const { prefix, core, suffix } = splitWordPunctuation(word);
                             const draft = activeProgress.wordDrafts?.[wordIndex] ?? "";
                             const displayedValue = revealed && result === "wrong" ? core : draft;
+                            const hint = result !== "correct" && adaptiveHintLevel > 0
+                              ? adaptiveHintLevel === 1
+                                ? `${core.slice(0, 1)}${core.length > 1 ? "…" : ""}`
+                                : `${core.slice(0, Math.min(2, core.length))}${core.length > 2 ? "·".repeat(Math.min(core.length - 2, 6)) : ""}`
+                              : "";
                             return (
                               <div className="word-entry" key={`${activeLine.id}-${wordIndex}`}>
                                 {prefix ? <span className="word-punctuation" aria-hidden="true">{prefix}</span> : null}
@@ -870,19 +964,24 @@ export function PopoverApp() {
                                         else if ((event.code === "Space" || event.key === "Enter") && !revealed) {
                                           const isEnter = event.key === "Enter";
                                           const isLastWord = wordIndex === activeWords.length - 1;
+                                          const currentDraft = event.currentTarget.value.trim();
+                                          const willComplete = Boolean(currentDraft)
+                                            && normalizeWordAnswer(currentDraft) === normalizeWordAnswer(activeWords[wordIndex] ?? "")
+                                            && activeWords.every((_, index) => index === wordIndex || activeProgress.wordResults?.[index] === "correct");
                                           if (!activeWordsCompleted) {
-                                            const currentDraft = event.currentTarget.value.trim();
                                             if (currentDraft) checkWord(wordIndex, currentDraft);
                                             else deferWord(wordIndex, !(isEnter && isLastWord));
                                           }
                                           if (isEnter) {
-                                            if (isLastWord) navigateStudyLine(1);
-                                            else focusWord(wordIndex + 1);
+                                            if (isLastWord) {
+                                              if (app.settings.autoAdvance && (activeWordsCompleted || willComplete)) navigateStudyLine(1);
+                                            } else focusWord(wordIndex + 1);
                                           }
                                         }
                                       }}
                                     />
                                   </span>
+                                  {hint ? <span className="adaptive-word-hint" aria-label="단어 힌트">{hint}</span> : null}
                                   <span className="word-result" aria-live="polite">{result === "correct" ? "정답" : result === "wrong" ? "오답" : result === "skipped" ? "보류" : ""}</span>
                                 </div>
                                 {suffix ? <span className="word-punctuation" aria-hidden="true">{suffix}</span> : null}
@@ -890,8 +989,9 @@ export function PopoverApp() {
                             );
                           })}
                         </div>
+                        {adaptiveHintLevel > 0 && !activeWordsCompleted ? <div className="adaptive-hint-bar"><span><Sparkles size={13} /> 같은 문장에서 막히고 있어 단어 힌트를 조금씩 열었습니다.</span>{errorPressure >= 5 && playbackRate !== 0.75 ? <button className="adaptive-slow-button" onClick={() => setRate(0.75)}>0.75×로 다시 듣기</button> : null}</div> : null}
                         <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}>
-                          <span>{activeWordsCompleted ? "문장 완료 · 마지막 칸에서 Enter로 다음 가사 이동" : "미완료 문장은 현재 구간을 계속 반복합니다."}</span>
+                          <span>{activeWordsCompleted ? (app.settings.autoAdvance ? "문장 완료 · 마지막 칸에서 Enter로 다음 가사 이동" : "문장 완료 · ↓로 다음 가사 이동") : "미완료 문장은 현재 구간을 계속 반복합니다."}</span>
                           <span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span>
                         </div>
                       </div>
@@ -920,16 +1020,19 @@ export function PopoverApp() {
 
         <section className="lyrics-panel">
           <div className="lyrics-toolbar">
-            <div className="lyrics-toolbar-copy"><p className="eyebrow">{mode === "dictation" ? "PRACTICE QUEUE" : "LYRIC TRACKER"}</p><h2>{mode === "dictation" ? "연습 문장" : "문장 트래킹"}</h2><small>{mode === "dictation" ? "한국어 뜻만 보고 원하는 줄로 이동" : "재생 위치에 맞춰 원문과 번역 확인"}</small></div>
+            <div className="lyrics-toolbar-copy"><p className="eyebrow">{reviewActive ? "REVIEW QUEUE" : mode === "dictation" ? "PRACTICE QUEUE" : "LYRIC TRACKER"}</p><h2>{reviewActive ? "어려웠던 문장" : mode === "dictation" ? "연습 문장" : "문장 트래킹"}</h2><small>{reviewActive ? "지난 기록에서 다시 볼 가치가 높은 문장만 표시" : mode === "dictation" ? "한국어 뜻만 보고 원하는 줄로 이동" : "재생 위치에 맞춰 원문과 번역 확인"}</small></div>
             <div className="toolbar-actions">
+              {reviewActive ? <button className="review-exit-button" onClick={() => setReviewQueue(null)}>전체 문장으로</button> : reviewCandidates.length ? <button className="review-queue-button" onClick={startReview}><RotateCcw size={14} /> 어려웠던 {reviewCandidates.length}문장</button> : null}
               <button className="translate-button" disabled={!song} onClick={() => setTranslationImportOpen(true)}><Sparkles size={15} /> AI 번역 가져오기</button>
             </div>
           </div>
           {translationProgress ? <div className={translationProgress.error ? "translation-status error" : "translation-status"}>{translationProgress.error ? <><AlertCircle size={14} /><span><b>{translationProgress.completed}/{translationProgress.total}줄까지 저장됨</b> · {translationProgress.error} 다시 누르면 이어서 번역합니다.</span></> : translating ? <><Loader2 className="spin" size={14} /><span><b>{translationProgress.completed}/{translationProgress.total}줄 번역 완료</b> · 받은 문장부터 바로 저장하고 있습니다.</span></> : null}</div> : <div className="translation-status" />}
           <div className="progress-strip"><span><b>{completedCount}</b> / {studyLineCount} 문장 완료</span><div><i style={{ width: `${studyLineCount ? (completedCount / studyLineCount) * 100 : 0}%` }} /></div></div>
+          {reviewActive ? <div className="review-mode-banner"><span><b>{reviewQueue?.length ?? 0}문장 집중 복습</b> · ↑/↓가 복습 큐 안에서만 이동합니다.</span><button className="review-exit-button" onClick={() => setReviewQueue(null)}>복습 종료</button></div> : null}
 
           <div className="lyrics-scroll">
             {song?.lyrics.map((line, index) => {
+              if (reviewActive && !reviewQueue?.includes(index)) return null;
               const progress = song.progress.lineProgress[line.id];
               const isActive = index === activeIndex;
               const words = isSectionLine(line.english) ? [] : line.english.trim().split(/\s+/).filter(Boolean);
@@ -963,9 +1066,9 @@ export function PopoverApp() {
           </div>
 
           {mode === "listen" ? (
-            <div className="shortcut-bar"><Keyboard size={15} /><span><kbd>Space</kbd> 재생</span><span><kbd>J</kbd>/<kbd>K</kbd> 문장 이동</span><span><kbd>R</kbd> 반복</span></div>
+            <div className="shortcut-bar"><Keyboard size={15} /><span><kbd>Space</kbd> 재생</span><span><kbd>J</kbd>/<kbd>K</kbd> 문장 이동</span><span><kbd>R</kbd> 반복</span><span><kbd>T</kbd> 뜻</span><span><kbd>N</kbd> 표현</span><span><kbd>[</kbd>/<kbd>]</kbd> 싱크</span></div>
           ) : (
-            <div className="shortcut-bar dictation-shortcuts"><Keyboard size={15} /><span><kbd>Space</kbd> 채점·보류</span><span><kbd>Enter</kbd> 다음 어절·가사</span><span><kbd>←</kbd>/<kbd>→</kbd> 어절</span><span><kbd>↑</kbd>/<kbd>↓</kbd> 가사</span><em>화살표는 재생 위치나 목록 스크롤을 바꾸지 않습니다</em></div>
+            <div className="shortcut-bar dictation-shortcuts"><Keyboard size={15} /><span><kbd>Space</kbd> 채점·보류</span><span><kbd>Enter</kbd> 다음 어절{app.settings.autoAdvance ? "·완료 시 다음 가사" : ""}</span><span><kbd>←</kbd>/<kbd>→</kbd> 어절</span><span><kbd>↑</kbd>/<kbd>↓</kbd> 가사</span><em>화살표는 재생 위치나 목록 스크롤을 바꾸지 않습니다</em></div>
           )}
         </section>
       </div>
@@ -1269,7 +1372,7 @@ function SettingsDialog({ app, onChange, onClose }: { app: PersistedState; onCha
   const updateSettings = (partial: Partial<PersistedState["settings"]>) => onChange({ ...app, settings: { ...app.settings, ...partial } });
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-      <div className="dialog-card settings-dialog" role="dialog" aria-modal="true"><div className="dialog-header"><div><p className="eyebrow">PREFERENCES</p><h2>학습 설정</h2></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div><div className="settings-body"><label className="setting-row"><span><b>보관함 저장 한도</b><small>Local Storage를 안정적으로 쓰기 위해 3~12곡을 권장합니다.</small></span><select value={app.settings.maxSongs} onChange={(event) => updateSettings({ maxSongs: Number(event.target.value) })}>{[3, 5, 8, 10, 12].map((value) => <option key={value} value={value}>{value}곡</option>)}</select></label><label className="setting-row toggle-setting"><span><b>받아쓰기 자동 반복</b><small>기본값은 켜짐입니다. 싱크를 맞추거나 영상을 자유롭게 탐색할 때 끌 수 있습니다.</small></span><input type="checkbox" checked={app.settings.dictationAutoRepeat} onChange={(event) => updateSettings({ dictationAutoRepeat: event.target.checked })} /></label>{app.songs.length > app.settings.maxSongs ? <div className="settings-warning"><AlertCircle size={15} /> 현재 곡 수가 한도보다 많습니다. 삭제 전까지 새 곡을 추가할 수 없습니다.</div> : null}<div className="storage-note"><Library size={18} /><div><b>{app.songs.length}곡 저장 중</b><p>영상과 음원은 YouTube iframe에서 재생되며 브라우저에는 저장되지 않습니다.</p></div></div></div><div className="dialog-footer"><p>.env.local의 키 값은 브라우저로 노출되지 않습니다.</p><button className="primary-button" onClick={onClose}>완료</button></div></div>
+      <div className="dialog-card settings-dialog" role="dialog" aria-modal="true"><div className="dialog-header"><div><p className="eyebrow">PREFERENCES</p><h2>학습 설정</h2></div><button className="icon-button" onClick={onClose}><X size={19} /></button></div><div className="settings-body"><label className="setting-row"><span><b>보관함 저장 한도</b><small>Local Storage를 안정적으로 쓰기 위해 3~12곡을 권장합니다.</small></span><select value={app.settings.maxSongs} onChange={(event) => updateSettings({ maxSongs: Number(event.target.value) })}>{[3, 5, 8, 10, 12].map((value) => <option key={value} value={value}>{value}곡</option>)}</select></label><label className="setting-row toggle-setting"><span><b>받아쓰기에서 한국어 뜻 항상 표시</b><small>끄면 뜻을 먼저 보지 않고 듣다가 필요한 순간에만 힌트를 열 수 있습니다.</small></span><input type="checkbox" checked={app.settings.showKoreanInDictation} onChange={(event) => updateSettings({ showKoreanInDictation: event.target.checked })} /></label><label className="setting-row toggle-setting"><span><b>완료 문장 Enter로 바로 이동</b><small>마지막 어절까지 맞힌 뒤 Enter를 누르면 다음 연습 문장으로 이동합니다.</small></span><input type="checkbox" checked={app.settings.autoAdvance} onChange={(event) => updateSettings({ autoAdvance: event.target.checked })} /></label><label className="setting-row toggle-setting"><span><b>받아쓰기 자동 반복</b><small>기본값은 켜짐입니다. 싱크를 맞추거나 영상을 자유롭게 탐색할 때 끌 수 있습니다.</small></span><input type="checkbox" checked={app.settings.dictationAutoRepeat} onChange={(event) => updateSettings({ dictationAutoRepeat: event.target.checked })} /></label>{app.songs.length > app.settings.maxSongs ? <div className="settings-warning"><AlertCircle size={15} /> 현재 곡 수가 한도보다 많습니다. 삭제 전까지 새 곡을 추가할 수 없습니다.</div> : null}<div className="storage-note"><Library size={18} /><div><b>{app.songs.length}곡 저장 중</b><p>영상과 음원은 YouTube iframe에서 재생되며 브라우저에는 저장되지 않습니다.</p></div></div></div><div className="dialog-footer"><p>.env.local의 키 값은 브라우저로 노출되지 않습니다.</p><button className="primary-button" onClick={onClose}>완료</button></div></div>
     </div>
   );
 }
