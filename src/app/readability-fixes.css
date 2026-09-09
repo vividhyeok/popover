@@ -1,0 +1,138 @@
+/* Readability pass for the lyric tracker and study copy.
+   Keep layout changes isolated from the learning behavior. */
+
+.workspace.listen-workspace {
+  grid-template-columns: 260px minmax(620px, 1fr) clamp(390px, 25vw, 460px);
+}
+
+.listen-workspace .lyrics-panel {
+  min-width: 390px;
+}
+
+.listen-workspace .lyrics-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 18px 16px 13px;
+}
+
+.lyrics-toolbar-copy {
+  min-width: 0;
+}
+
+.lyrics-toolbar-copy h2 {
+  line-height: 1.2;
+  word-break: keep-all;
+}
+
+.lyrics-toolbar-copy small {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.45;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.listen-workspace .toolbar-actions {
+  flex: 0 0 auto;
+  align-items: flex-start;
+}
+
+.listen-workspace .lyrics-scroll {
+  padding: 10px 10px 28px;
+}
+
+.listen-workspace .lyric-row {
+  grid-template-columns: 28px minmax(0, 1fr) 44px;
+  gap: 10px;
+  padding: 12px 10px 12px 8px;
+}
+
+.listen-workspace .line-index {
+  padding-top: 3px;
+  font-size: 8px;
+  line-height: 1.2;
+}
+
+.listen-workspace .line-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.listen-workspace .line-english {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.42;
+  letter-spacing: -0.01em;
+  word-break: normal;
+  overflow-wrap: break-word;
+  hyphens: none;
+}
+
+.listen-workspace .line-korean {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.62;
+  letter-spacing: -0.01em;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.listen-workspace .line-status {
+  align-self: flex-start;
+  justify-self: end;
+  padding-top: 3px;
+  white-space: nowrap;
+}
+
+.focus-line-card .focus-english {
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.focus-line-card .focus-korean,
+.focus-note p,
+.dictation-prompt p {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* Never let the shortcut guide collapse Korean labels into vertical glyphs. */
+.shortcut-bar {
+  gap: 10px;
+  padding-inline: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+
+.shortcut-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.shortcut-bar span,
+.shortcut-bar em {
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+@media (max-width: 1320px) {
+  .workspace.listen-workspace {
+    grid-template-columns: 240px minmax(580px, 1fr) minmax(360px, 380px);
+  }
+
+  .listen-workspace .lyrics-panel {
+    min-width: 360px;
+  }
+
+  .listen-workspace .line-english {
+    font-size: 14px;
+  }
+}
