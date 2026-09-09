@@ -131,7 +131,11 @@ export function PopoverApp() {
   const duration = playerDuration || song?.duration || song?.lyrics.at(-1)?.end || 0;
 
   useEffect(() => {
-    setDictationLineIndex(mode === "dictation" ? Math.max(trackedIndex, 0) : null);
+    if (mode === "dictation") {
+      setDictationLineIndex(reviewQueue?.length ? reviewQueue[0] : Math.max(trackedIndex, 0));
+    } else {
+      setDictationLineIndex(null);
+    }
   }, [mode, song?.id]);
 
   useEffect(() => {
@@ -143,6 +147,10 @@ export function PopoverApp() {
   useEffect(() => {
     setReviewQueue(null);
   }, [song?.id]);
+
+  useEffect(() => {
+    if (mode !== "dictation") setReviewQueue(null);
+  }, [mode]);
 
   const updateSong = useCallback((id: string, updater: (value: Song) => Song) => {
     setApp((state) => ({ ...state, songs: state.songs.map((item) => (item.id === id ? updater(item) : item)) }));
@@ -408,7 +416,11 @@ export function PopoverApp() {
     ? song?.progress.lineProgress[activeLine.id] ?? EMPTY_PROGRESS
     : EMPTY_PROGRESS;
   const revealed = Boolean(activeProgress.revealed);
-  const adaptiveHintLevel = revealed ? 0 : activeProgress.attempts >= 6 ? 2 : activeProgress.attempts >= 3 ? 1 : 0;
+  const correctAttemptCount = activeProgress.wordResults?.filter((result) => result === "correct").length ?? 0;
+  const wrongResultCount = activeProgress.wordResults?.filter((result) => result === "wrong").length ?? 0;
+  const skippedResultCount = activeProgress.wordResults?.filter((result) => result === "skipped").length ?? 0;
+  const errorPressure = Math.max(0, activeProgress.attempts - correctAttemptCount) + wrongResultCount + skippedResultCount;
+  const adaptiveHintLevel = revealed ? 0 : errorPressure >= 6 ? 2 : errorPressure >= 3 ? 1 : 0;
   const showDictationMeaning = app.settings.showKoreanInDictation || dictationMeaningRevealed;
 
   const focusWord = (wordIndex: number) => {
@@ -977,7 +989,7 @@ export function PopoverApp() {
                             );
                           })}
                         </div>
-                        {adaptiveHintLevel > 0 && !activeWordsCompleted ? <div className="adaptive-hint-bar"><span><Sparkles size={13} /> 같은 문장에서 막히고 있어 단어 힌트를 조금씩 열었습니다.</span>{activeProgress.attempts >= 5 && playbackRate !== 0.75 ? <button className="adaptive-slow-button" onClick={() => setRate(0.75)}>0.75×로 다시 듣기</button> : null}</div> : null}
+                        {adaptiveHintLevel > 0 && !activeWordsCompleted ? <div className="adaptive-hint-bar"><span><Sparkles size={13} /> 같은 문장에서 막히고 있어 단어 힌트를 조금씩 열었습니다.</span>{errorPressure >= 5 && playbackRate !== 0.75 ? <button className="adaptive-slow-button" onClick={() => setRate(0.75)}>0.75×로 다시 듣기</button> : null}</div> : null}
                         <div className={`word-practice-foot ${activeWordsCompleted ? "ready-next" : ""}`}>
                           <span>{activeWordsCompleted ? (app.settings.autoAdvance ? "문장 완료 · 마지막 칸에서 Enter로 다음 가사 이동" : "문장 완료 · ↓로 다음 가사 이동") : "미완료 문장은 현재 구간을 계속 반복합니다."}</span>
                           <span>시도 {activeProgress.attempts}회 · 최고 {activeProgress.bestScore}%</span>
