@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 
+import { OpenAIRequestError, requestStructuredOpenAI, resolveOpenAIApiKey } from "@/lib/openai-responses";
+
+export const maxDuration = 60;
+
 type TranslateRequest = {
   title?: string;
   artist?: string;
@@ -8,35 +12,30 @@ type TranslateRequest = {
   endIndex?: number;
   existingTranslations?: Array<string | null>;
   existingNotes?: Array<string | null>;
+  apiKey?: string;
+  model?: string;
 };
 
-type DeepSeekResponse = {
-  choices?: Array<{ message?: { content?: string } }>;
-  error?: { message?: string };
+type TranslationOutput = {
+  mood: string;
+  lines: Array<{
+    index: number;
+    translation: string;
+    studyNote: string | null;
+  }>;
 };
 
 const normalizeLine = (line: string) =>
   line.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
 
-async function requestDeepSeek(apiKey: string, body: Record<string, unknown>) {
-  return fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(body),
-    // Keep each serverless invocation below a 10-second ceiling. Retries happen
-    // in the browser as fresh API requests so one invocation never accumulates them.
-    signal: AbortSignal.timeout(8500),
-  });
-}
-
 export async function POST(request: Request) {
   const body = (await request.json()) as TranslateRequest;
   const { title, artist, lyrics, existingTranslations = [], existingNotes = [] } = body;
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = resolveOpenAIApiKey(body.apiKey);
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: "DEEPSEEK_API_KEY가 설정되지 않았습니다. .env.local 또는 Vercel 환경 변수에 추가해주세요.", code: "MISSING_KEY" },
+      { error: "OpenAI API 키가 없습니다. 설정에서 API 키를 저장하거나 OPENAI_API_KEY 환경 변수를 추가해주세요.", code: "MISSING_KEY" },
       { status: 503 },
     );
   }
@@ -60,112 +59,84 @@ export async function POST(request: Request) {
     .filter(Boolean)
     .join("\n");
 
-  let response: Response;
-  try {
-    response = await requestDeepSeek(apiKey, {
-      model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-pro",
-      response_format: { type: "json_object" },
-      max_tokens: Math.max(2200, batchLyrics.length * 320),
-      messages: [
-        {
-          role: "system",
-          content: `You translate English pop lyrics into Korean for Korean learners of English.
-
-Read the entire song before translating so pronouns, narrative, emotional arc, recurring images, and references remain coherent. Follow this study-first contract:
-1. Return exactly one Korean translation for each requested line. Never merge, split, skip, or reorder lines.
-2. Translate identical repeated English lines identically. Reuse confirmed translations exactly for identical lines and keep hook terminology stable.
-3. Use direct, intuitive Korean that maps back to the English. Use context for accuracy, but never rewrite poetically or add imagery.
-4. Preserve the register of slang, contractions, profanity, deliberate nonstandard grammar, dialect, and wordplay. Do not silently correct the English.
-5. Add a study note only for slang, idioms, deliberate grammar, wordplay, or cultural references that materially help learning. Use one short Korean sentence or null.
-6. Do not censor meaning, quote the English inside the Korean translation, or add general commentary.
-
-Every requested result must carry its absolute 1-based lyric index. Return only valid JSON shaped exactly as:
-{"mood":"곡 전체 분위기를 나타내는 짧은 한국어 구절","lines":[{"index":1,"translation":"번역","studyNote":null}]}`,
+  const schema = {
+    type: "object",
+    properties: {
+      mood: { type: "string" },
+      lines: {
+        type: "array",
+        minItems: batchLyrics.length,
+        maxItems: batchLyrics.length,
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer" },
+            translation: { type: "string" },
+            studyNote: { type: ["string", "null"] },
+          },
+          required: ["index", "translation", "studyNote"],
+          additionalProperties: false,
         },
-        {
-          role: "user",
-          content: `Return JSON. Song: ${title ?? "Unknown"} — ${artist ?? "Unknown"}
-Full song (${lyrics.length} lines):
+      },
+    },
+    required: ["mood", "lines"],
+    additionalProperties: false,
+  };
+
+  try {
+    const result = await requestStructuredOpenAI<TranslationOutput>({
+      apiKey,
+      model: body.model,
+      schemaName: "popover_lyric_translation",
+      schema,
+      reasoningEffort: "low",
+      maxOutputTokens: Math.min(16000, Math.max(3000, batchLyrics.length * 360)),
+      timeoutMs: 50000,
+      system: `You are the Korean translation engine for an English-pop listening and dictation study app.
+
+Read the ENTIRE song before translating the requested lines. Resolve pronouns, speaker/addressee, narrative, emotional arc, repeated imagery, slang, and references from full-song context. This is an English-learning translation, not a literary rewrite.
+
+Rules:
+1. Return exactly one Korean translation for every requested lyric line. Never merge, split, skip, duplicate, or reorder requested lines.
+2. Translate identical repeated English lines identically. Reuse confirmed translations exactly for identical lines and keep recurring hooks and terminology stable.
+3. Write direct, natural Korean that lets a learner map the Korean back to the English. Use context to disambiguate, but do not add information that is absent from the lyric.
+4. Preserve register and intent: slang, contractions, profanity, dialect, deliberate nonstandard grammar, jokes, and wordplay should remain recognizable rather than being sanitized.
+5. studyNote must be null unless an idiom, slang expression, deliberate grammar, wordplay, pronunciation-linked contraction, or cultural reference materially helps English study. When needed, write one compact Korean sentence.
+6. Do not quote the full English line inside translation or studyNote. Do not add general commentary.
+7. Every result must use the original absolute 1-based lyric index supplied by the user.`,
+      user: `Song: ${title ?? "Unknown"} — ${artist ?? "Unknown"}
+
+FULL SONG (${lyrics.length} lines; context only):
 ${lyrics.map((line, index) => `${index + 1}. ${line}`).join("\n")}
 
-Confirmed translations from earlier batches:
+CONFIRMED TRANSLATIONS FROM EARLIER BATCHES:
 ${confirmed || "None yet"}
 
-Translate only lines ${startIndex + 1} through ${endIndex}. Return exactly ${batchLyrics.length} objects in the lines array, using the original absolute line numbers ${startIndex + 1} through ${endIndex}.`,
-        },
-      ],
+Translate ONLY lines ${startIndex + 1} through ${endIndex}. Return exactly ${batchLyrics.length} line objects using absolute indexes ${startIndex + 1} through ${endIndex}.`,
     });
-  } catch {
-    return NextResponse.json(
-      { error: "DeepSeek 연결 시간이 초과됐습니다. 같은 8줄을 새 요청으로 다시 시도합니다.", code: "UPSTREAM_TIMEOUT" },
-      { status: 504 },
-    );
-  }
-
-  let data: DeepSeekResponse;
-  try {
-    data = (await response.json()) as DeepSeekResponse;
-  } catch {
-    return NextResponse.json({ error: "DeepSeek가 읽을 수 없는 응답을 반환했습니다." }, { status: 502 });
-  }
-  if (!response.ok) {
-    return NextResponse.json({ error: data.error?.message ?? "DeepSeek 번역 요청에 실패했습니다." }, { status: response.status });
-  }
-
-  try {
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error("empty content");
-    const jsonStart = content.indexOf("{");
-    const jsonEnd = content.lastIndexOf("}");
-    if (jsonStart < 0 || jsonEnd <= jsonStart) throw new Error("missing json object");
-    const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1)) as {
-      mood?: string;
-      lines?: Array<{ index?: unknown; translation?: unknown; studyNote?: unknown; note?: unknown }>;
-      translations?: unknown[];
-      studyNotes?: unknown[];
-    };
 
     const rawTranslations: unknown[] = Array(batchLyrics.length).fill(undefined);
     const rawNotes: unknown[] = Array(batchLyrics.length).fill(null);
 
-    if (Array.isArray(parsed.lines)) {
-      for (const item of parsed.lines) {
-        const absoluteIndex = typeof item.index === "number" ? item.index - 1 : Number(item.index) - 1;
-        if (!Number.isInteger(absoluteIndex) || absoluteIndex < startIndex || absoluteIndex >= endIndex) continue;
-        const batchIndex = absoluteIndex - startIndex;
-        rawTranslations[batchIndex] = item.translation;
-        rawNotes[batchIndex] = item.studyNote ?? item.note ?? null;
-      }
-    } else if (Array.isArray(parsed.translations)) {
-      // Some models still return the legacy array shape. Accept either the requested
-      // batch or a full-song array and select the requested range deterministically.
-      const returnedFullSong = parsed.translations.length === lyrics.length;
-      const sourceTranslations = returnedFullSong
-        ? parsed.translations.slice(startIndex, endIndex)
-        : parsed.translations;
-      const sourceNotes = Array.isArray(parsed.studyNotes)
-        ? returnedFullSong
-          ? parsed.studyNotes.slice(startIndex, endIndex)
-          : parsed.studyNotes
-        : [];
-      sourceTranslations.slice(0, batchLyrics.length).forEach((value, index) => {
-        rawTranslations[index] = value;
-        rawNotes[index] = sourceNotes[index] ?? null;
-      });
+    for (const item of result.data.lines) {
+      const absoluteIndex = Number(item.index) - 1;
+      if (!Number.isInteger(absoluteIndex) || absoluteIndex < startIndex || absoluteIndex >= endIndex) continue;
+      const batchIndex = absoluteIndex - startIndex;
+      rawTranslations[batchIndex] = item.translation;
+      rawNotes[batchIndex] = item.studyNote;
     }
 
     const missingCount = rawTranslations.filter((value) => typeof value !== "string" || !value.trim()).length;
     if (missingCount > 0) {
-      const receivedCount = batchLyrics.length - missingCount;
       return NextResponse.json(
-        { error: `DeepSeek 응답에서 요청한 ${batchLyrics.length}줄 중 ${receivedCount}줄만 확인됐습니다. 다시 누르면 같은 구간을 재시도합니다.`, code: "PARTIAL_BATCH" },
+        { error: `OpenAI 응답에서 요청한 ${batchLyrics.length}줄 중 ${batchLyrics.length - missingCount}줄만 확인됐습니다. 같은 구간을 다시 시도해주세요.`, code: "PARTIAL_BATCH" },
         { status: 502 },
       );
     }
 
     const notes = rawNotes.map((note) => (typeof note === "string" && note.trim() ? note.trim() : null));
-
     const canonical = new Map<string, { translation: string; note: string | null }>();
+
     lyrics.forEach((line, index) => {
       const translation = existingTranslations[index];
       if (translation) canonical.set(normalizeLine(line), { translation, note: existingNotes[index] ?? null });
@@ -189,9 +160,13 @@ Translate only lines ${startIndex + 1} through ${endIndex}. Return exactly ${bat
       endIndex,
       translations,
       studyNotes: notes,
-      mood: parsed.mood ?? "",
+      mood: result.data.mood ?? "",
+      model: result.model,
     });
-  } catch {
-    return NextResponse.json({ error: "번역 응답의 문장 수가 요청한 구간과 맞지 않습니다. 다시 시도해주세요." }, { status: 502 });
+  } catch (error) {
+    if (error instanceof OpenAIRequestError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    return NextResponse.json({ error: "번역 응답을 처리하지 못했습니다. 다시 시도해주세요." }, { status: 502 });
   }
 }
