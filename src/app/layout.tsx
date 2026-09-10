@@ -4,6 +4,7 @@ import "./globals.css";
 import "./learning-enhancements.css";
 import "./readability-fixes.css";
 import "./simple-popover.css";
+import "./media-shell.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
