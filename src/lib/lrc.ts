@@ -57,6 +57,8 @@ export function formatTime(value: number) {
 
 export function normalizeAnswer(value: string) {
   return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[’']/g, "'")
     .replace(/[^a-z0-9'\s]/g, " ")
@@ -87,4 +89,3 @@ export function answerScore(answer: string, target: string) {
 
   return Math.max(0, Math.round((1 - previous[b.length] / Math.max(a.length, b.length)) * 100));
 }
-
