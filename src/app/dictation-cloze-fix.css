@@ -1,0 +1,115 @@
+/*
+ * Dictation cloze hotfix.
+ *
+ * The target-word probe must be the only element that participates in intrinsic
+ * sizing. The input is absolutely positioned over that probe so `width: 100%`
+ * cannot make every word expand to a column-sized field.
+ */
+.simple-word-flow {
+  align-items: flex-end;
+  gap: 10px 14px;
+}
+
+.simple-word {
+  flex: 0 0 auto !important;
+  display: inline-flex;
+  min-width: 0;
+  align-items: flex-end;
+}
+
+/* Current V2 markup uses this direct span as the cloze shell. */
+.simple-word > span {
+  position: relative !important;
+  display: inline-block !important;
+  width: max-content;
+  min-width: 1.2em;
+  max-width: 100%;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  line-height: 1.2;
+  vertical-align: bottom;
+}
+
+/* Hidden target characters determine the exact proportional-font width.
+   Punctuation children remain visible in their original character positions. */
+.simple-word > span > span[aria-hidden="true"] {
+  position: relative;
+  z-index: 2 !important;
+  display: inline-block;
+  box-sizing: border-box;
+  padding: 4px 2px 6px !important;
+  white-space: pre;
+  color: var(--media-text);
+  font: inherit;
+  line-height: 1.2 !important;
+  opacity: 1 !important;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* The input must never participate in intrinsic sizing. */
+.simple-word > span > input {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1 !important;
+  width: 100% !important;
+  height: 100%;
+  min-width: 0 !important;
+  max-width: none !important;
+  box-sizing: border-box;
+  padding: 4px 2px 6px !important;
+  border: 0;
+  border-bottom: 2px solid #54545b;
+  background: transparent !important;
+  outline: none;
+  color: var(--media-text);
+  font: inherit !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+}
+
+.simple-word.correct > span > input {
+  border-bottom-color: #6fae69;
+  color: transparent !important;
+  caret-color: transparent;
+}
+
+.simple-word.wrong > span > input {
+  border-bottom-color: #d35c68;
+  color: #ef8993;
+}
+
+.simple-word.skipped > span > input {
+  border-bottom-color: #a98954;
+}
+
+/* Once an answer is correct, render the original target glyphs from the probe.
+   This also puts apostrophes/commas/periods back at their exact source positions
+   instead of drawing punctuation over a punctuation-stripped input value. */
+.simple-word.correct > span > span[aria-hidden="true"] > span {
+  visibility: visible !important;
+}
+
+.simple-word.correct > span > span[aria-hidden="true"] {
+  color: #98d493;
+}
+
+/* `정답 보기` makes the input readonly. Chromium supports :has(), and this app
+   already targets modern desktop browsers. Reveal the source glyphs in that state
+   for the same punctuation-safe rendering used by correct answers. */
+.simple-word:has(> span > input[readonly]) > span > input {
+  color: transparent !important;
+  caret-color: transparent;
+}
+
+.simple-word:has(> span > input[readonly]) > span > span[aria-hidden="true"] > span {
+  visibility: visible !important;
+}
+
+.simple-word:has(> span > input[readonly]) > span > span[aria-hidden="true"] {
+  color: var(--media-text);
+}
+
+.simple-word.correct:has(> span > input[readonly]) > span > span[aria-hidden="true"] {
+  color: #98d493;
+}
