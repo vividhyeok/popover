@@ -1,5 +1,5 @@
-import { PopoverApp } from "@/components/popover-app";
+import { PopoverAppV2 } from "@/components/popover-app-v2";
 
 export default function Home() {
-  return <PopoverApp />;
+  return <PopoverAppV2 />;
 }
