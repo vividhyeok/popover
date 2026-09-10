@@ -7,6 +7,7 @@ import "./readability-fixes.css";
 import "./simple-popover.css";
 import "./media-shell.css";
 import "./reveal-preferences.css";
+import "./dictation-cloze-fix.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
