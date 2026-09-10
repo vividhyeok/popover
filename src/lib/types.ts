@@ -14,6 +14,7 @@ export type LineProgress = {
   wordDrafts?: string[];
   wordResults?: Array<"correct" | "wrong" | "skipped" | null>;
   revealed?: boolean;
+  starred?: boolean;
   attempts: number;
   bestScore: number;
   completed: boolean;
@@ -47,6 +48,8 @@ export type AppSettings = {
   autoAdvance: boolean;
   showKoreanInDictation: boolean;
   dictationAutoRepeat: boolean;
+  showTrackerKorean: boolean;
+  fontScale: "normal" | "large";
 };
 
 export type PersistedState = {
