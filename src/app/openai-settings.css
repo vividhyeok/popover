@@ -1,0 +1,122 @@
+.openai-settings-card {
+  margin-top: 15px;
+  padding: 14px;
+  border: 1px solid var(--media-line, #d7d1c5);
+  border-radius: 9px;
+  background: var(--media-surface, #f3f0e8);
+  color: var(--media-text, #171217);
+}
+
+.openai-settings-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--media-line, #d7d1c5);
+}
+
+.openai-settings-heading > span,
+.openai-settings-row > span,
+.openai-key-row > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.openai-settings-heading b,
+.openai-settings-heading small,
+.openai-settings-row b,
+.openai-settings-row small,
+.openai-key-row b,
+.openai-key-row small {
+  display: block;
+}
+
+.openai-settings-heading b { font-size: 14px; }
+.openai-settings-heading small,
+.openai-settings-row small,
+.openai-key-row small {
+  margin-top: 3px;
+  color: var(--media-muted, #817a7e);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.openai-settings-row,
+.openai-key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 0 0;
+}
+
+.openai-settings-row select {
+  width: min(320px, 46%);
+  min-width: 220px;
+  height: 36px;
+  border: 1px solid var(--media-line-strong, #aaa196);
+  border-radius: 7px;
+  padding: 0 8px;
+  background: var(--media-panel, #fffdf7);
+  color: var(--media-text, #171217);
+}
+
+.openai-key-row { align-items: flex-start; }
+.openai-key-control {
+  width: min(390px, 56%);
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px 0 9px;
+  border: 1px solid var(--media-line-strong, #aaa196);
+  border-radius: 7px;
+  background: var(--media-panel, #fffdf7);
+  color: var(--media-muted, #817a7e);
+}
+
+.openai-key-control input {
+  min-width: 0;
+  flex: 1;
+  height: 34px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--media-text, #171217);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+}
+
+.openai-key-control button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 8px;
+  background: var(--media-surface-2, #171217);
+  color: var(--media-text, #fff);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 10.5px;
+}
+
+.openai-key-control button:disabled { opacity: .45; cursor: default; }
+.openai-key-control .openai-key-delete { padding: 0 6px; background: transparent; color: var(--media-muted, #817a7e); }
+.openai-settings-note { margin: 10px 0 0; color: var(--media-dim, #817a7e); font-size: 10px; line-height: 1.45; }
+
+.simple-song-menu .openai-song-translate {
+  color: var(--media-text, inherit);
+}
+
+.simple-song-menu .openai-song-translate:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+@media (max-width: 760px) {
+  .openai-settings-row,
+  .openai-key-row { display: block; }
+  .openai-settings-row select,
+  .openai-key-control { width: 100%; min-width: 0; margin-top: 8px; }
+}
