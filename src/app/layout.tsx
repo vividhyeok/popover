@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { OpenAISettingsController } from "@/components/openai-settings-controller";
 import { RevealPreferencesController } from "@/components/reveal-preferences-controller";
 import "./globals.css";
 import "./learning-enhancements.css";
@@ -8,6 +9,7 @@ import "./simple-popover.css";
 import "./media-shell.css";
 import "./reveal-preferences.css";
 import "./dictation-cloze-fix.css";
+import "./openai-settings.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,6 +35,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         {children}
         <RevealPreferencesController />
+        <OpenAISettingsController />
       </body>
     </html>
   );
