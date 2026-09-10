@@ -91,7 +91,18 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(function You
   const mountRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const initialTimeRef = useRef(initialTime);
+  const onTimeRef = useRef(onTime);
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  const onReadyChangeRef = useRef(onReadyChange);
   const [error, setError] = useState("");
+
+  initialTimeRef.current = initialTime;
+
+  useEffect(() => {
+    onTimeRef.current = onTime;
+    onPlayingChangeRef.current = onPlayingChange;
+    onReadyChangeRef.current = onReadyChange;
+  }, [onTime, onPlayingChange, onReadyChange]);
 
   useImperativeHandle(ref, () => ({
     play: () => playerRef.current?.playVideo(),
@@ -110,7 +121,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(function You
 
   useEffect(() => {
     let cancelled = false;
-    onReadyChange(false);
+    onReadyChangeRef.current(false);
     setError("");
 
     loadYouTubeApi()
@@ -130,9 +141,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(function You
           events: {
             onReady: (event) => {
               if (initialTimeRef.current > 0.5) event.target.seekTo(initialTimeRef.current, true);
-              onReadyChange(true);
+              onReadyChangeRef.current(true);
             },
-            onStateChange: (event) => onPlayingChange(event.data === 1),
+            onStateChange: (event) => onPlayingChangeRef.current(event.data === 1),
           },
         });
       })
@@ -143,16 +154,16 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, Props>(function You
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, [videoId, onPlayingChange, onReadyChange]);
+  }, [videoId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       const player = playerRef.current;
       if (!player) return;
-      onTime(player.getCurrentTime() || 0, player.getDuration() || 0);
-    }, 60);
+      onTimeRef.current(player.getCurrentTime() || 0, player.getDuration() || 0);
+    }, 100);
     return () => window.clearInterval(timer);
-  }, [onTime]);
+  }, []);
 
   return (
     <div className="youtube-frame-wrap">
