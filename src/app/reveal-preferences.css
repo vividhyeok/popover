@@ -1,0 +1,134 @@
+.reveal-pref-root {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.reveal-pref-trigger {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .045);
+  color: rgba(255, 255, 255, .72);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  transition: background .16s ease, color .16s ease, border-color .16s ease;
+}
+
+.reveal-pref-trigger:hover,
+.reveal-pref-trigger.active {
+  color: #fff;
+  background: rgba(255, 255, 255, .09);
+  border-color: rgba(255, 255, 255, .2);
+}
+
+.reveal-pref-trigger.active::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: .8;
+}
+
+.reveal-pref-menu {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  width: 276px;
+  padding: 7px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 11px;
+  background: rgba(23, 23, 25, .98);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .34);
+  backdrop-filter: blur(20px);
+  z-index: 120;
+}
+
+.reveal-pref-heading {
+  padding: 8px 9px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, .07);
+  margin-bottom: 4px;
+}
+
+.reveal-pref-heading strong,
+.reveal-pref-heading span {
+  display: block;
+}
+
+.reveal-pref-heading strong {
+  color: #f7f7f8;
+  font-size: 13px;
+}
+
+.reveal-pref-heading span {
+  margin-top: 3px;
+  color: rgba(255, 255, 255, .45);
+  font-size: 11px;
+}
+
+.reveal-pref-menu > button {
+  width: 100%;
+  min-height: 52px;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, .72);
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.reveal-pref-menu > button:hover {
+  background: rgba(255, 255, 255, .06);
+  color: #fff;
+}
+
+.reveal-pref-menu > button span,
+.reveal-pref-menu > button b,
+.reveal-pref-menu > button small {
+  display: block;
+}
+
+.reveal-pref-menu > button b {
+  font-size: 12.5px;
+  font-weight: 680;
+}
+
+.reveal-pref-menu > button small {
+  margin-top: 3px;
+  color: rgba(255, 255, 255, .38);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.reveal-pref-menu > button > i {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 4px;
+}
+
+.reveal-pref-menu > p {
+  margin: 5px 8px 6px;
+  color: rgba(255, 255, 255, .34);
+  font-size: 10.5px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+@media (max-width: 1280px) {
+  .reveal-pref-trigger span { display: none; }
+  .reveal-pref-trigger { width: 36px; padding: 0; justify-content: center; }
+}
