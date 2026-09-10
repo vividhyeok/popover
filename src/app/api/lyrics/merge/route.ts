@@ -16,9 +16,9 @@ type LyricInput = { start: number; end: number; english: string };
 type MergeSuggestion = { after: number; reason: string };
 type MergeOutput = { mergeAfter: number[] };
 
-const MAX_STUDY_WORDS = 16;
-const MAX_STUDY_CHARS = 110;
-const MAX_STUDY_SECONDS = 11;
+const MAX_STUDY_WORDS = 14;
+const MAX_STUDY_CHARS = 96;
+const MAX_STUDY_SECONDS = 10;
 
 const isSectionLine = (english: string) => /^\[[^\]]+\]$/.test(english.trim());
 const incompleteEnding = /\b(?:a|an|the|to|of|for|with|from|about|into|on|in|at|by|as|than|and|but|or|because|cause|cuz|cos|if|when|whenever|while|that|who|which|where|is|are|was|were|be|been|being|do|does|did|have|has|had|can|can't|cannot|could|couldn't|will|won't|would|wouldn't|shall|should|shouldn't|may|might|must|feel|feels|feeling|like|want|wanna|wanted|need|needed|try|trying|make|makes|made|let|keep|keeps|start|started|stop|stopped|look|looking|wait|waiting|swear|promise|hope|think|know|say|tell)$/i;
@@ -76,7 +76,7 @@ function enforceStudyUnitLimits(lyrics: LyricInput[], candidates: number[]) {
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     const duration = Math.max(0, group.at(-1)!.end - group[0].start);
     const leftNeedsCompletion = incompleteEnding.test(cleanLeftBoundary(lyrics[after - 1].english));
-    const slightlyExtendedForRequiredCompletion = leftNeedsCompletion && wordCount <= MAX_STUDY_WORDS + 2 && text.length <= MAX_STUDY_CHARS + 20;
+    const slightlyExtendedForRequiredCompletion = leftNeedsCompletion && wordCount <= MAX_STUDY_WORDS + 2 && text.length <= MAX_STUDY_CHARS + 16;
 
     if (
       (wordCount <= MAX_STUDY_WORDS && text.length <= MAX_STUDY_CHARS && duration <= MAX_STUDY_SECONDS)
@@ -145,7 +145,7 @@ The objective is not to reconstruct the longest grammatically complete sentence.
 Rules:
 1. MERGE when a source line is an awkward fragment and the next line supplies a required object, complement, infinitive, prepositional phrase, subordinate clause, or shared-subject predicate.
 2. KEEP a boundary when both sides work as independently hearable clauses, even if they belong to one larger grammatical sentence.
-3. Prefer roughly 4-12 words per resulting study unit. Do not intentionally create a unit above 16 words. If a full sentence is longer, keep a sensible clause boundary instead of merging the entire sentence.
+3. Prefer roughly 4-10 words per resulting study unit. Do not intentionally create a unit above 14 words. If a full sentence is longer, keep a sensible clause boundary instead of merging the entire sentence.
 4. Never cross [Verse], [Chorus], speaker labels, a repeated hook boundary, call-and-response, or a clear sentence change.
 5. Do not merge identical repeated lines.
 6. A line ending in terminal punctuation is normally a hard stop.
