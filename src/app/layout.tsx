@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { RevealPreferencesController } from "@/components/reveal-preferences-controller";
 import "./globals.css";
 import "./learning-enhancements.css";
 import "./readability-fixes.css";
 import "./simple-popover.css";
 import "./media-shell.css";
+import "./reveal-preferences.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,7 +29,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="ko"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <RevealPreferencesController />
+      </body>
     </html>
   );
 }
