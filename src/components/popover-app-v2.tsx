@@ -55,6 +55,12 @@ const EMPTY_PROGRESS: LineProgress = {
   starred: false,
 };
 
+const LOOP_LEAD_IN_SECONDS = 0.65;
+const LOOP_TAIL_SECONDS = 0.45;
+const isDictationCharacter = (value: string) => /[\p{L}\p{N}]/u.test(value);
+const sanitizeWordDraft = (value: string) => Array.from(value).filter(isDictationCharacter).join("");
+const dictationAnswer = (value: string) => Array.from(value).filter(isDictationCharacter).join("");
+
 const normalizeWordAnswer = (value: string) => normalizeAnswer(value).replace(/[\s']/g, "");
 const normalizedLineKey = (value: string) => value.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
 
@@ -66,11 +72,6 @@ const isNonStudyLine = (english: string) => {
 };
 
 const sectionLabel = (english: string) => english.trim().replace(/^\[|\]$/g, "");
-
-const splitWordPunctuation = (value: string) => {
-  const match = value.match(/^([^A-Za-z0-9-]*)(.*?[A-Za-z0-9-])([^A-Za-z0-9-]*)$/);
-  return match ? { prefix: match[1], core: match[2], suffix: match[3] } : { prefix: "", core: value, suffix: "" };
-};
 
 async function requestLyricMergeSuggestions(target: Pick<Song, "title" | "artist" | "lyrics">) {
   let lastError = "가사 구조 분석에 실패했습니다.";
@@ -117,6 +118,7 @@ export function PopoverAppV2() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [dictationLineIndex, setDictationLineIndex] = useState<number | null>(null);
   const [loopLine, setLoopLine] = useState(false);
+  const [listenLoopIndex, setListenLoopIndex] = useState<number | null>(null);
   const [showMeaning, setShowMeaning] = useState(false);
   const [showNote, setShowNote] = useState(false);
   const [dictationMeaning, setDictationMeaning] = useState(false);
@@ -179,7 +181,9 @@ export function PopoverAppV2() {
 
   const activeIndex = mode === "dictation" && dictationLineIndex !== null
     ? dictationLineIndex
-    : trackedIndex;
+    : mode === "listen" && loopLine && listenLoopIndex !== null
+      ? listenLoopIndex
+      : trackedIndex;
   const activeLine = activeIndex >= 0 ? song?.lyrics[activeIndex] : undefined;
   const duration = playerDuration || song?.duration || song?.lyrics.at(-1)?.end || 0;
   const activeWords = useMemo(() => activeLine && !isNonStudyLine(activeLine.english) ? activeLine.english.trim().split(/\s+/).filter(Boolean) : [], [activeLine?.id]);
@@ -202,7 +206,15 @@ export function PopoverAppV2() {
     setPlayerDuration(song.duration || 0);
     setPlaying(false);
     setLyricFilter("all");
+    setLoopLine(false);
+    setListenLoopIndex(null);
   }, [song?.id]);
+
+  useEffect(() => {
+    if (mode === "listen") return;
+    setLoopLine(false);
+    setListenLoopIndex(null);
+  }, [mode]);
 
   useEffect(() => {
     currentTimeRef.current = currentTime;
@@ -245,9 +257,9 @@ export function PopoverAppV2() {
     else setCurrentTime(safe);
   }, [duration, song?.videoId]);
 
-  const seekLine = useCallback((index: number) => {
+  const seekLine = useCallback((index: number, leadInSeconds = 0) => {
     if (!song?.lyrics[index]) return;
-    seekTo(song.lyrics[index].start - song.syncOffsetMs / 1000);
+    seekTo(song.lyrics[index].start - song.syncOffsetMs / 1000 - Math.max(0, leadInSeconds));
   }, [seekTo, song]);
 
   const navigateStudyLine = useCallback((direction: -1 | 1) => {
@@ -256,8 +268,9 @@ export function PopoverAppV2() {
     const nextPosition = Math.max(0, Math.min((position < 0 ? 0 : position) + direction, studyLineIndexes.length - 1));
     const next = studyLineIndexes[nextPosition];
     if (mode === "dictation") setDictationLineIndex(next);
-    seekLine(next);
-  }, [activeIndex, mode, seekLine, studyLineIndexes]);
+    else if (loopLine) setListenLoopIndex(next);
+    seekLine(next, mode === "listen" && loopLine ? LOOP_LEAD_IN_SECONDS : 0);
+  }, [activeIndex, loopLine, mode, seekLine, studyLineIndexes]);
 
   const handlePlayerTime = useCallback((time: number, nextDuration: number) => {
     currentTimeRef.current = time;
@@ -276,11 +289,23 @@ export function PopoverAppV2() {
     playerRef.current?.setRate(rate);
   };
 
+  const toggleListenLoop = useCallback(() => {
+    const next = !loopLine;
+    setLoopLine(next);
+    if (!next) {
+      setListenLoopIndex(null);
+      return;
+    }
+    const target = nearestStudyIndex(Math.max(trackedIndex, 0));
+    setListenLoopIndex(target);
+    seekLine(target, LOOP_LEAD_IN_SECONDS);
+  }, [loopLine, nearestStudyIndex, seekLine, trackedIndex]);
+
   useEffect(() => {
     if (!playing || !song || !activeLine) return;
     const shouldRepeat = mode === "dictation" ? app.settings.dictationAutoRepeat : loopLine;
-    if (!shouldRepeat || effectiveTime < activeLine.end - 0.12) return;
-    seekLine(activeIndex);
+    if (!shouldRepeat || effectiveTime < activeLine.end + LOOP_TAIL_SECONDS) return;
+    seekLine(activeIndex, LOOP_LEAD_IN_SECONDS);
   }, [activeIndex, activeLine, app.settings.dictationAutoRepeat, effectiveTime, loopLine, mode, playing, seekLine, song]);
 
   useEffect(() => {
@@ -292,12 +317,12 @@ export function PopoverAppV2() {
         togglePlayback();
       } else if (mode === "listen" && event.key.toLowerCase() === "j") navigateStudyLine(-1);
       else if (mode === "listen" && event.key.toLowerCase() === "k") navigateStudyLine(1);
-      else if (mode === "listen" && event.key.toLowerCase() === "r") setLoopLine((value) => !value);
+      else if (mode === "listen" && event.key.toLowerCase() === "r") toggleListenLoop();
       else if (mode === "listen" && event.key.toLowerCase() === "t") setShowMeaning((value) => !value);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mode, navigateStudyLine, togglePlayback]);
+  }, [mode, navigateStudyLine, toggleListenLoop, togglePlayback]);
 
   const alignLineToNow = (index: number) => {
     if (!song?.lyrics[index]) return;
@@ -637,7 +662,7 @@ export function PopoverAppV2() {
                   <button aria-label="이전 문장" onClick={() => navigateStudyLine(-1)}><ChevronLeft size={22} /></button>
                   <button className="simple-play" aria-label={playing ? "일시정지" : "재생"} onClick={togglePlayback}>{playing ? <Pause size={23} fill="currentColor" /> : <Play size={23} fill="currentColor" />}</button>
                   <button aria-label="다음 문장" onClick={() => navigateStudyLine(1)}><ChevronRight size={22} /></button>
-                  <button className={loopLine ? "simple-text-control active" : "simple-text-control"} onClick={() => setLoopLine((value) => !value)}><RotateCcw size={14} /> 반복</button>
+                  <button className={loopLine ? "simple-text-control active" : "simple-text-control"} onClick={toggleListenLoop}><RotateCcw size={14} /> 반복</button>
                   <label className="simple-rate">속도 <select value={playbackRate} onChange={(event) => setRate(Number(event.target.value))}><option value={0.75}>0.75×</option><option value={1}>1×</option><option value={1.25}>1.25×</option><option value={1.5}>1.5×</option></select></label>
                 </div>
               </div>
@@ -649,40 +674,59 @@ export function PopoverAppV2() {
                   <div className="simple-word-flow">
                     {activeWords.map((word, wordIndex) => {
                       const result = activeProgress.wordResults?.[wordIndex] ?? null;
-                      const { prefix, core, suffix } = splitWordPunctuation(word);
                       const draft = activeProgress.wordDrafts?.[wordIndex] ?? "";
-                      const displayed = activeProgress.revealed && result !== "correct" ? core : draft;
+                      const answer = dictationAnswer(word);
+                      const displayed = activeProgress.revealed && result !== "correct" ? answer : draft;
                       return <div className={`simple-word ${result ?? ""}`} key={`${activeLine.id}-${wordIndex}`}>
-                        {prefix ? <span>{prefix}</span> : null}
-                        <input
-                          ref={(element) => { wordInputRefs.current[wordIndex] = element; }}
-                          value={displayed}
-                          readOnly={Boolean(activeProgress.revealed)}
-                          placeholder="…"
-                          autoComplete="off"
-                          spellCheck={false}
-                          onChange={(event) => setWordDraft(wordIndex, event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.nativeEvent.isComposing) return;
-                            if ([" ", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
-                              event.preventDefault();
-                              event.stopPropagation();
-                            }
-                            if (event.key === "ArrowLeft") focusWord(Math.max(0, wordIndex - 1));
-                            else if (event.key === "ArrowRight") focusWord(Math.min(activeWords.length - 1, wordIndex + 1));
-                            else if (event.key === "ArrowUp") navigateStudyLine(-1);
-                            else if (event.key === "ArrowDown") navigateStudyLine(1);
-                            else if (event.key === " " || event.key === "Enter") {
-                              const draftValue = event.currentTarget.value.trim();
-                              const completed = draftValue ? checkWord(wordIndex, draftValue) : (deferWord(wordIndex), false);
-                              if (event.key === "Enter") {
-                                if (wordIndex < activeWords.length - 1) focusWord(wordIndex + 1);
-                                else if (app.settings.autoAdvance && (completed || activeWordsCompleted)) navigateStudyLine(1);
+                        <span style={{ display: "inline-grid", position: "relative", alignItems: "center", fontSize: "14px", fontWeight: 700, fontFamily: "inherit" }}>
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              gridArea: "1 / 1",
+                              zIndex: 2,
+                              padding: "4px 2px",
+                              whiteSpace: "pre",
+                              pointerEvents: "none",
+                              userSelect: "none",
+                              lineHeight: "normal",
+                              opacity: 0.72,
+                            }}
+                          >
+                            {Array.from(word).map((character, characterIndex) => isDictationCharacter(character)
+                              ? <span key={`${character}-${characterIndex}`} style={{ visibility: "hidden" }}>{character}</span>
+                              : <span key={`${character}-${characterIndex}`}>{character}</span>)}
+                          </span>
+                          <input
+                            ref={(element) => { wordInputRefs.current[wordIndex] = element; }}
+                            aria-label={`${wordIndex + 1}번째 어절, ${answer.length}글자`}
+                            value={displayed}
+                            readOnly={Boolean(activeProgress.revealed)}
+                            maxLength={Math.max(answer.length, 1)}
+                            autoComplete="off"
+                            spellCheck={false}
+                            style={{ gridArea: "1 / 1", zIndex: 1, width: "100%", minWidth: 0, maxWidth: "none", boxSizing: "border-box", font: "inherit", fontWeight: 700 }}
+                            onChange={(event) => setWordDraft(wordIndex, sanitizeWordDraft(event.target.value))}
+                            onKeyDown={(event) => {
+                              if (event.nativeEvent.isComposing) return;
+                              if ([" ", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+                                event.preventDefault();
+                                event.stopPropagation();
                               }
-                            }
-                          }}
-                        />
-                        {suffix ? <span>{suffix}</span> : null}
+                              if (event.key === "ArrowLeft") focusWord(Math.max(0, wordIndex - 1));
+                              else if (event.key === "ArrowRight") focusWord(Math.min(activeWords.length - 1, wordIndex + 1));
+                              else if (event.key === "ArrowUp") navigateStudyLine(-1);
+                              else if (event.key === "ArrowDown") navigateStudyLine(1);
+                              else if (event.key === " " || event.key === "Enter") {
+                                const draftValue = event.currentTarget.value.trim();
+                                const completed = draftValue ? checkWord(wordIndex, draftValue) : (deferWord(wordIndex), false);
+                                if (event.key === "Enter") {
+                                  if (wordIndex < activeWords.length - 1) focusWord(wordIndex + 1);
+                                  else if (app.settings.autoAdvance && (completed || activeWordsCompleted)) navigateStudyLine(1);
+                                }
+                              }
+                            }}
+                          />
+                        </span>
                       </div>;
                     })}
                   </div>
@@ -719,7 +763,11 @@ export function PopoverAppV2() {
               const progress = song?.progress.lineProgress[line.id];
               const isActive = index === activeIndex;
               return <div ref={isActive ? activeLyricRowRef : undefined} className={`simple-lyric-row ${isActive ? "active" : ""}`} key={line.id}>
-                <button className="simple-lyric-main" onClick={() => { if (mode === "dictation") setDictationLineIndex(index); seekLine(index); }}>
+                <button className="simple-lyric-main" onClick={() => {
+                  if (mode === "dictation") setDictationLineIndex(index);
+                  else if (loopLine) setListenLoopIndex(index);
+                  seekLine(index, mode === "listen" && loopLine ? LOOP_LEAD_IN_SECONDS : 0);
+                }}>
                   <span className="simple-line-index">{String(studyNumberByIndex.get(index) ?? 0).padStart(2, "0")}</span>
                   <span className="simple-line-copy">
                     {mode === "listen" ? <b>{line.english}</b> : <b>{line.korean || "뜻을 준비하지 못했습니다."}</b>}
