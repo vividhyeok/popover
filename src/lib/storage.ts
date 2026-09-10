@@ -1,4 +1,3 @@
-import { DEFAULT_OPENAI_MODEL, resolveOpenAIModel } from "./ai-config";
 import { demoSong } from "./demo";
 import type { PersistedState } from "./types";
 
@@ -15,7 +14,6 @@ export const defaultState: PersistedState = {
     dictationAutoRepeat: true,
     showTrackerKorean: false,
     fontScale: "normal",
-    openAIModel: DEFAULT_OPENAI_MODEL,
   },
 };
 
@@ -29,11 +27,7 @@ export function loadState(): PersistedState {
     return {
       ...defaultState,
       ...parsed,
-      settings: {
-        ...defaultState.settings,
-        ...parsed.settings,
-        openAIModel: resolveOpenAIModel(parsed.settings?.openAIModel),
-      },
+      settings: { ...defaultState.settings, ...parsed.settings },
     };
   } catch {
     return defaultState;
