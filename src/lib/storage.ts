@@ -10,8 +10,10 @@ export const defaultState: PersistedState = {
   settings: {
     maxSongs: 8,
     autoAdvance: true,
-    showKoreanInDictation: true,
+    showKoreanInDictation: false,
     dictationAutoRepeat: true,
+    showTrackerKorean: false,
+    fontScale: "normal",
   },
 };
 
