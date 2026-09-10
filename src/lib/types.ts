@@ -1,3 +1,5 @@
+import type { OpenAIModel } from "./ai-config";
+
 export type StudyMode = "listen" | "dictation";
 
 export type LyricLine = {
@@ -50,6 +52,7 @@ export type AppSettings = {
   dictationAutoRepeat: boolean;
   showTrackerKorean: boolean;
   fontScale: "normal" | "large";
+  openAIModel: OpenAIModel;
 };
 
 export type PersistedState = {
