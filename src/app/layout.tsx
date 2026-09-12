@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ListenUXController } from "@/components/listen-ux-controller";
+import { MusicMetadataController } from "@/components/music-metadata-controller";
 import { OpenAISettingsController } from "@/components/openai-settings-controller";
 import { RevealPreferencesController } from "@/components/reveal-preferences-controller";
 import "./globals.css";
@@ -10,6 +12,7 @@ import "./media-shell.css";
 import "./reveal-preferences.css";
 import "./dictation-cloze-fix.css";
 import "./openai-settings.css";
+import "./listen-ux.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -36,6 +39,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         {children}
         <RevealPreferencesController />
         <OpenAISettingsController />
+        <MusicMetadataController />
+        <ListenUXController />
       </body>
     </html>
   );
